@@ -1,0 +1,19 @@
+# Binary
+server
+shellvault-cli
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Keys
+keys/
+
+# Backups
+backups/
