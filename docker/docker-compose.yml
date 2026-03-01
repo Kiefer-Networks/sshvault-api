@@ -1,0 +1,78 @@
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.shellvault.rule=Host(`api.shellvault.app`)"
+      - "traefik.http.routers.shellvault.tls.certresolver=letsencrypt"
+      - "traefik.http.services.shellvault.loadbalancer.server.port=8080"
+
+  backup:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["./shellvault-cli", "backup", "auto"]
+    env_file:
+      - ../.env
+    environment:
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL: "${BACKUP_INTERVAL:-24h}"
+      BACKUP_RETENTION: "${BACKUP_RETENTION:-7}"
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shellvault
+      POSTGRES_USER: shellvault
+      POSTGRES_PASSWORD: shellvault
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shellvault"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.dashboard=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@shellvault.app"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  backups:
+  letsencrypt:

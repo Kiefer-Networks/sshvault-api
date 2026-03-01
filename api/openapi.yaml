@@ -1,0 +1,612 @@
+openapi: "3.1.0"
+info:
+  title: ShellVault API
+  description: Zero-Knowledge encrypted sync server for the ShellVault SSH client app.
+  version: "1.0.0"
+  contact:
+    name: Kiefer Networks
+    url: https://kiefer-networks.de
+
+servers:
+  - url: https://api.shellvault.app
+    description: Production
+  - url: http://localhost:8080
+    description: Local Development
+
+tags:
+  - name: Auth
+    description: Authentication and registration
+  - name: Vault
+    description: Encrypted vault sync
+  - name: User
+    description: User profile management
+  - name: Devices
+    description: Device management
+  - name: Billing
+    description: Subscription billing
+  - name: System
+    description: Health checks
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Liveness check
+      operationId: health
+      responses:
+        "200":
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /ready:
+    get:
+      tags: [System]
+      summary: Readiness check
+      operationId: ready
+      responses:
+        "200":
+          description: Server and database are ready
+        "503":
+          description: Database not ready
+
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register new account
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "409":
+          description: Email already registered
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                device_name:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh token pair
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid or expired refresh token
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke refresh token
+      operationId: logout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Logged out
+
+  /v1/auth/oauth/{provider}:
+    post:
+      tags: [Auth]
+      summary: OAuth login/register
+      operationId: oauthLogin
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [apple, google]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id_token]
+              properties:
+                id_token:
+                  type: string
+                device_name:
+                  type: string
+      responses:
+        "200":
+          description: OAuth login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /v1/auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verify email address
+      operationId: verifyEmail
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Email verified
+
+  /v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request password reset
+      operationId: forgotPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Reset link sent if email exists
+
+  /v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with token
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Password reset successful
+
+  /v1/vault:
+    get:
+      tags: [Vault]
+      summary: Get current vault blob
+      operationId: getVault
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current vault
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultResponse"
+        "402":
+          description: Active subscription required
+    put:
+      tags: [Vault]
+      summary: Upload vault blob (optimistic locking)
+      operationId: putVault
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, blob, checksum]
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+                blob:
+                  type: string
+                  format: byte
+                checksum:
+                  type: string
+                  description: SHA-256 of blob
+      responses:
+        "200":
+          description: Vault updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultResponse"
+        "402":
+          description: Active subscription required
+        "409":
+          description: Version conflict
+
+  /v1/vault/history:
+    get:
+      tags: [Vault]
+      summary: Get vault version history
+      operationId: getVaultHistory
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Version history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VaultHistoryEntry"
+
+  /v1/vault/history/{version}:
+    get:
+      tags: [Vault]
+      summary: Get specific vault version
+      operationId: getVaultHistoryVersion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Historical vault version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultResponse"
+        "404":
+          description: Version not found
+
+  /v1/user:
+    get:
+      tags: [User]
+      summary: Get user profile
+      operationId: getUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    put:
+      tags: [User]
+      summary: Update user profile
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    delete:
+      tags: [User]
+      summary: Delete account (soft delete, purge after 30 days)
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account scheduled for deletion
+
+  /v1/user/password:
+    put:
+      tags: [User]
+      summary: Change password
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Password changed
+
+  /v1/devices:
+    get:
+      tags: [Devices]
+      summary: List user devices
+      operationId: listDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+
+  /v1/devices/{id}:
+    delete:
+      tags: [Devices]
+      summary: Remove device
+      operationId: deleteDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Device removed
+
+  /v1/billing/status:
+    get:
+      tags: [Billing]
+      summary: Get subscription status
+      operationId: billingStatus
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatus"
+
+  /v1/billing/checkout:
+    post:
+      tags: [Billing]
+      summary: Create Stripe checkout session
+      operationId: billingCheckout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+
+  /v1/billing/portal:
+    post:
+      tags: [Billing]
+      summary: Create Stripe customer portal session
+      operationId: billingPortal
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+
+  /v1/webhooks/stripe:
+    post:
+      tags: [Billing]
+      summary: Stripe webhook endpoint
+      operationId: stripeWebhook
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Webhook processed
+
+  /v1/webhooks/apple:
+    post:
+      tags: [Billing]
+      summary: Apple App Store webhook
+      operationId: appleWebhook
+      responses:
+        "200":
+          description: Webhook processed
+
+  /v1/webhooks/google:
+    post:
+      tags: [Billing]
+      summary: Google Play webhook
+      operationId: googleWebhook
+      responses:
+        "200":
+          description: Webhook processed
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_at:
+          type: integer
+          format: int64
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    VaultResponse:
+      type: object
+      properties:
+        version:
+          type: integer
+        blob:
+          type: string
+          format: byte
+        checksum:
+          type: string
+        updated_at:
+          type: integer
+          format: int64
+
+    VaultHistoryEntry:
+      type: object
+      properties:
+        version:
+          type: integer
+        checksum:
+          type: string
+        created_at:
+          type: integer
+          format: int64
+
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        platform:
+          type: string
+        last_sync:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    BillingStatus:
+      type: object
+      properties:
+        active:
+          type: boolean
+        provider:
+          type: string
+        status:
+          type: string
