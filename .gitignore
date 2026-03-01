@@ -1,6 +1,7 @@
 # Binary
-server
-shellvault-cli
+/server
+/shellvault-server
+/shellvault-cli
 
 # Environment
 .env

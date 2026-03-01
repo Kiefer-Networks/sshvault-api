@@ -157,7 +157,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(chimiddleware.RealIP)
+	r.Use(mw.TrustedRealIP(cfg.Server.TrustedProxies))
 	r.Use(mw.RequestID)
 	r.Use(mw.SecurityHeaders)
 	r.Use(chimiddleware.Recoverer)
@@ -224,11 +224,13 @@ func main() {
 
 	// Server
 	srv := &http.Server{
-		Addr:         cfg.Server.Addr,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.Server.Addr,
+		Handler:           r,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 2 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
 	// Graceful shutdown

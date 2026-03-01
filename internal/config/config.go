@@ -20,10 +20,11 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr       string `envconfig:"SERVER_ADDR" default:":8080"`
-	Env        string `envconfig:"SERVER_ENV" default:"production"`
-	AppBaseURL string `envconfig:"APP_BASE_URL" default:"https://app.sshvault.app"`
-	APIBaseURL string `envconfig:"API_BASE_URL" default:"https://api.sshvault.app"`
+	Addr           string `envconfig:"SERVER_ADDR" default:"127.0.0.1:8080"`
+	Env            string `envconfig:"SERVER_ENV" default:"production"`
+	AppBaseURL     string `envconfig:"APP_BASE_URL" default:"https://app.sshvault.app"`
+	APIBaseURL     string `envconfig:"API_BASE_URL" default:"https://api.sshvault.app"`
+	TrustedProxies string `envconfig:"TRUSTED_PROXIES" default:"127.0.0.1/8,::1/128"`
 }
 
 type DatabaseConfig struct {
