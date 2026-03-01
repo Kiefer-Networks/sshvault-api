@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/lestrrat-go/jwx/v2/jwk"
 )
 
 type OAuthProvider interface {
@@ -24,34 +24,50 @@ type OAuthUserInfo struct {
 // --- Apple ---
 
 type AppleOAuth struct {
-	teamID   string
 	clientID string
+	cache    *jwk.Cache
 }
 
-type appleJWKS struct {
-	Keys []json.RawMessage `json:"keys"`
-}
+func NewAppleOAuth(_, clientID string) *AppleOAuth {
+	ctx := context.Background()
+	c := jwk.NewCache(ctx)
+	_ = c.Register("https://appleid.apple.com/auth/keys", jwk.WithMinRefreshInterval(15*time.Minute))
 
-func NewAppleOAuth(teamID, clientID string) *AppleOAuth {
-	return &AppleOAuth{teamID: teamID, clientID: clientID}
+	return &AppleOAuth{
+		clientID: clientID,
+		cache:    c,
+	}
 }
 
 func (a *AppleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUserInfo, error) {
+	set, err := a.cache.Get(ctx, "https://appleid.apple.com/auth/keys")
+	if err != nil {
+		return nil, fmt.Errorf("fetching Apple JWKS: %w", err)
+	}
+
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"RS256"}),
 		jwt.WithIssuer("https://appleid.apple.com"),
 		jwt.WithAudience(a.clientID),
 	)
 
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
-		kid, ok := token.Header["kid"].(string)
+	token, err := parser.Parse(idToken, func(t *jwt.Token) (interface{}, error) {
+		kid, ok := t.Header["kid"].(string)
 		if !ok {
 			return nil, fmt.Errorf("missing kid in token header")
 		}
-		return fetchApplePublicKey(ctx, kid)
-	}
 
-	token, err := parser.Parse(idToken, keyFunc)
+		key, found := set.LookupKeyID(kid)
+		if !found {
+			return nil, fmt.Errorf("Apple key %s not found in JWKS", kid)
+		}
+
+		var rawKey interface{}
+		if err := key.Raw(&rawKey); err != nil {
+			return nil, fmt.Errorf("extracting raw key: %w", err)
+		}
+		return rawKey, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("verifying Apple ID token: %w", err)
 	}
@@ -75,52 +91,6 @@ func (a *AppleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUse
 	}, nil
 }
 
-func fetchApplePublicKey(ctx context.Context, kid string) (interface{}, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://appleid.apple.com/auth/keys", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching Apple JWKS: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var jwks struct {
-		Keys []struct {
-			KID string `json:"kid"`
-			N   string `json:"n"`
-			E   string `json:"e"`
-			Kty string `json:"kty"`
-		} `json:"keys"`
-	}
-	if err := json.Unmarshal(body, &jwks); err != nil {
-		return nil, fmt.Errorf("parsing Apple JWKS: %w", err)
-	}
-
-	for _, key := range jwks.Keys {
-		if key.KID == kid {
-			return jwt.ParseRSAPublicKeyFromPEM(buildRSAPEM(key.N, key.E))
-		}
-	}
-
-	return nil, fmt.Errorf("Apple key %s not found", kid)
-}
-
-func buildRSAPEM(n, e string) []byte {
-	// In production, properly reconstruct RSA key from JWK components.
-	// For now, we use a simplified approach — the actual JWKS parsing
-	// should use a proper JWK library in production.
-	return nil
-}
-
 // --- Google ---
 
 type GoogleOAuth struct {
@@ -132,9 +102,8 @@ func NewGoogleOAuth(clientID string) *GoogleOAuth {
 }
 
 func (g *GoogleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUserInfo, error) {
-	url := fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?id_token=%s", idToken)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://oauth2.googleapis.com/tokeninfo?id_token="+idToken, nil)
 	if err != nil {
 		return nil, err
 	}

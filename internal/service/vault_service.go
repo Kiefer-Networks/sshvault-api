@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
+
 	"github.com/kiefernetworks/shellvault-server/internal/model"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
@@ -127,10 +129,9 @@ func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutV
 		}
 		vault = updated
 
-		// Prune old history
+		// Prune old history (non-fatal)
 		if err := s.vaultRepo.PruneHistory(ctx, vault.ID, s.historyLimit); err != nil {
-			// Non-fatal: log but don't fail the request
-			_ = err
+			log.Warn().Err(err).Str("vault_id", vault.ID.String()).Msg("failed to prune vault history")
 		}
 	}
 

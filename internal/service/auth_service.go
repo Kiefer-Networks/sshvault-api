@@ -16,11 +16,12 @@ import (
 )
 
 type AuthService struct {
-	userRepo   repository.UserRepository
-	tokenRepo  repository.TokenRepository
-	jwt        *auth.JWTManager
-	mailer     MailSender
-	bruteForce *middleware.BruteForceGuard
+	userRepo      repository.UserRepository
+	tokenRepo     repository.TokenRepository
+	verifyRepo    repository.VerificationRepository
+	jwt           *auth.JWTManager
+	mailer        MailSender
+	bruteForce    *middleware.BruteForceGuard
 }
 
 type MailSender interface {
@@ -31,6 +32,7 @@ type MailSender interface {
 func NewAuthService(
 	userRepo repository.UserRepository,
 	tokenRepo repository.TokenRepository,
+	verifyRepo repository.VerificationRepository,
 	jwt *auth.JWTManager,
 	mailer MailSender,
 	bruteForce *middleware.BruteForceGuard,
@@ -38,6 +40,7 @@ func NewAuthService(
 	return &AuthService{
 		userRepo:   userRepo,
 		tokenRepo:  tokenRepo,
+		verifyRepo: verifyRepo,
 		jwt:        jwt,
 		mailer:     mailer,
 		bruteForce: bruteForce,
@@ -112,7 +115,9 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 
 	if s.mailer != nil {
 		verifyToken := uuid.New().String()
-		_ = s.mailer.SendVerificationEmail(ctx, user.Email, verifyToken)
+		if err := s.mailer.SendVerificationEmail(ctx, user.Email, verifyToken); err != nil {
+			log.Warn().Err(err).Str("email", req.Email).Msg("failed to send verification email")
+		}
 	}
 
 	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID)
@@ -339,4 +344,109 @@ func (s *AuthService) OAuthLogin(ctx context.Context, provider auth.OAuthProvide
 		RefreshToken: tokenPair.RefreshToken,
 		ExpiresAt:    tokenPair.ExpiresAt,
 	}, nil
+}
+
+// VerifyEmail validates an email verification token and marks the user as verified.
+func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
+	hash := auth.HashToken(rawToken)
+	token, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindEmailVerify)
+	if err != nil {
+		return fmt.Errorf("looking up token: %w", err)
+	}
+	if token == nil {
+		return fmt.Errorf("invalid or expired verification token")
+	}
+	if time.Now().After(token.ExpiresAt) {
+		return fmt.Errorf("verification token expired")
+	}
+
+	user, err := s.userRepo.GetByID(ctx, token.UserID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	user.Verified = true
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("updating user: %w", err)
+	}
+
+	if err := s.verifyRepo.MarkUsed(ctx, token.ID); err != nil {
+		log.Warn().Err(err).Msg("failed to mark verification token as used")
+	}
+
+	log.Info().Str("email", user.Email).Msg("email verified")
+	return nil
+}
+
+// ForgotPassword generates a password reset token and sends it via email.
+func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil || user == nil {
+		return nil // Don't reveal if user exists
+	}
+
+	_ = s.verifyRepo.RevokeAllForUser(ctx, user.ID, repository.TokenKindPasswordReset)
+
+	rawToken := uuid.New().String()
+	hash := auth.HashToken(rawToken)
+
+	vt := &repository.VerificationToken{
+		UserID:    user.ID,
+		TokenHash: hash,
+		Kind:      repository.TokenKindPasswordReset,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	if err := s.verifyRepo.Create(ctx, vt); err != nil {
+		return fmt.Errorf("creating reset token: %w", err)
+	}
+
+	if s.mailer != nil {
+		if err := s.mailer.SendPasswordResetEmail(ctx, user.Email, rawToken); err != nil {
+			log.Warn().Err(err).Str("email", email).Msg("failed to send password reset email")
+		}
+	}
+
+	log.Info().Str("email", email).Msg("password reset requested")
+	return nil
+}
+
+// ResetPassword validates a reset token and sets a new password.
+func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword string) error {
+	hash := auth.HashToken(rawToken)
+	token, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindPasswordReset)
+	if err != nil {
+		return fmt.Errorf("looking up token: %w", err)
+	}
+	if token == nil {
+		return fmt.Errorf("invalid or expired reset token")
+	}
+	if time.Now().After(token.ExpiresAt) {
+		return fmt.Errorf("reset token expired")
+	}
+
+	user, err := s.userRepo.GetByID(ctx, token.UserID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	passwordHash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("hashing password: %w", err)
+	}
+
+	user.Password = passwordHash
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("updating password: %w", err)
+	}
+
+	if err := s.verifyRepo.MarkUsed(ctx, token.ID); err != nil {
+		log.Warn().Err(err).Msg("failed to mark reset token as used")
+	}
+
+	if err := s.tokenRepo.RevokeAllForUser(ctx, user.ID); err != nil {
+		log.Warn().Err(err).Msg("failed to revoke tokens after password reset")
+	}
+
+	log.Info().Str("user_id", user.ID.String()).Msg("password reset completed")
+	return nil
 }

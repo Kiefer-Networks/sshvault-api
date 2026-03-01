@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
+
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
@@ -101,7 +103,9 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.authService.Logout(r.Context(), req.RefreshToken)
+	if err := h.authService.Logout(r.Context(), req.RefreshToken); err != nil {
+		log.Warn().Err(err).Msg("logout token revocation failed")
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
@@ -145,10 +149,14 @@ func (h *AuthHandler) OAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement email verification token validation
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		respondError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+
+	if err := h.authService.VerifyEmail(r.Context(), token); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -164,7 +172,11 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always return success to prevent email enumeration
+	// Fire-and-forget: always return success to prevent email enumeration
+	if err := h.authService.ForgotPassword(r.Context(), req.Email); err != nil {
+		log.Warn().Err(err).Msg("forgot password processing failed")
+	}
+
 	respondJSON(w, http.StatusOK, map[string]string{"status": "if the email exists, a reset link has been sent"})
 }
 
@@ -188,6 +200,10 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Validate reset token and update password
-	respondJSON(w, http.StatusOK, map[string]string{"status": "password reset"})
+	if err := h.authService.ResetPassword(r.Context(), req.Token, req.NewPassword); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "password reset successful"})
 }

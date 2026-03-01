@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/kiefernetworks/shellvault-server/internal/middleware"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
@@ -22,9 +21,8 @@ func NewVaultHandler(vaultService *service.VaultService, billingService *service
 }
 
 func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -43,9 +41,8 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -89,9 +86,8 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VaultHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -105,9 +101,8 @@ func (h *VaultHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 

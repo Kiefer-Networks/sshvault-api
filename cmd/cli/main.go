@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -693,7 +694,7 @@ func createBackup(databaseURL, dir string) (string, error) {
 
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("shellvault_%s.sql.gz", timestamp)
-	path := fmt.Sprintf("%s/%s", dir, filename)
+	path := filepath.Join(dir, filename)
 
 	// Use pg_dump piped to gzip
 	cmdStr := fmt.Sprintf(`pg_dump "%s" --no-owner --no-acl | gzip > "%s"`, databaseURL, path)
@@ -755,7 +756,7 @@ func pruneBackups(dir string, keep int) {
 	// Entries are sorted alphabetically (= chronologically due to timestamp format)
 	toDelete := backups[:len(backups)-keep]
 	for _, e := range toDelete {
-		path := fmt.Sprintf("%s/%s", dir, e.Name())
+		path := filepath.Join(dir, e.Name())
 		if err := os.Remove(path); err == nil {
 			fmt.Printf("  Pruned old backup: %s\n", e.Name())
 		}

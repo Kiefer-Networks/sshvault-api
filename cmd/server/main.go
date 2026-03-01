@@ -83,6 +83,7 @@ func main() {
 	// Repositories
 	userRepo := repository.NewUserRepository(pool)
 	tokenRepo := repository.NewTokenRepository(pool)
+	verifyRepo := repository.NewVerificationRepository(pool)
 	vaultRepo := repository.NewVaultRepository(pool)
 	deviceRepo := repository.NewDeviceRepository(pool)
 	subRepo := repository.NewSubscriptionRepository(pool)
@@ -123,7 +124,7 @@ func main() {
 	}()
 
 	// Services
-	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, bruteForceGuard)
+	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, jwtManager, mailService, bruteForceGuard)
 	vaultService := service.NewVaultService(vaultRepo, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
 	userService := service.NewUserService(userRepo, tokenRepo)
 	billingService := service.NewBillingService(subRepo, billingProvider, billingEnabled)

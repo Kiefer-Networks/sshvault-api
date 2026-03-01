@@ -3,7 +3,6 @@ package handler
 import (
 	"net/http"
 
-	"github.com/kiefernetworks/shellvault-server/internal/middleware"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
@@ -16,9 +15,8 @@ func NewUserHandler(userService *service.UserService) *UserHandler {
 }
 
 func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -32,9 +30,8 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -54,9 +51,8 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -72,9 +68,8 @@ func (h *UserHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 

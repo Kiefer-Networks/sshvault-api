@@ -4,7 +4,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/kiefernetworks/shellvault-server/internal/middleware"
+	"github.com/rs/zerolog/log"
+
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
@@ -21,9 +22,8 @@ func NewBillingHandler(billingService *service.BillingService, userService *serv
 }
 
 func (h *BillingHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -37,9 +37,8 @@ func (h *BillingHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -59,9 +58,8 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -75,15 +73,15 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BillingHandler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MB limit
+	body, err := readWebhookBody(r)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "failed to read body")
 		return
 	}
-	defer r.Body.Close()
 
 	signature := r.Header.Get("Stripe-Signature")
 	if err := h.billingService.HandleWebhook(r.Context(), "stripe", string(body), signature); err != nil {
+		log.Warn().Err(err).Msg("stripe webhook processing failed")
 		respondError(w, http.StatusBadRequest, "webhook processing failed")
 		return
 	}
@@ -92,14 +90,14 @@ func (h *BillingHandler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BillingHandler) AppleWebhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := readWebhookBody(r)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "failed to read body")
 		return
 	}
-	defer r.Body.Close()
 
 	if err := h.billingService.HandleWebhook(r.Context(), "apple", string(body), ""); err != nil {
+		log.Warn().Err(err).Msg("apple webhook processing failed")
 		respondError(w, http.StatusBadRequest, "webhook processing failed")
 		return
 	}
@@ -108,17 +106,23 @@ func (h *BillingHandler) AppleWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := readWebhookBody(r)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "failed to read body")
 		return
 	}
-	defer r.Body.Close()
 
 	if err := h.billingService.HandleWebhook(r.Context(), "google", string(body), ""); err != nil {
+		log.Warn().Err(err).Msg("google webhook processing failed")
 		respondError(w, http.StatusBadRequest, "webhook processing failed")
 		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// readWebhookBody reads and limits a webhook request body to 1 MB.
+func readWebhookBody(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	return io.ReadAll(io.LimitReader(r.Body, 1<<20))
 }

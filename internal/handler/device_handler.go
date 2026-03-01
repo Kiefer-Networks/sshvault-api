@@ -5,7 +5,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/kiefernetworks/shellvault-server/internal/middleware"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
@@ -22,9 +21,8 @@ func NewDeviceHandler(deviceRepo repository.DeviceRepository, tokenRepo reposito
 }
 
 func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -43,9 +41,8 @@ func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeviceHandler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
