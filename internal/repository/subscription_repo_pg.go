@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,9 +22,9 @@ func NewSubscriptionRepository(pool *pgxpool.Pool) SubscriptionRepository {
 
 func (r *pgSubscriptionRepo) Create(ctx context.Context, sub *model.Subscription) error {
 	query := `
-		INSERT INTO subscriptions (id, user_id, provider, provider_sub_id, status,
+		INSERT INTO subscriptions (id, user_id, provider, provider_sub_id, provider_customer_id, status,
 			current_period_start, current_period_end, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
 	now := time.Now()
 	if sub.ID == uuid.Nil {
@@ -33,7 +34,7 @@ func (r *pgSubscriptionRepo) Create(ctx context.Context, sub *model.Subscription
 	sub.UpdatedAt = now
 
 	_, err := r.pool.Exec(ctx, query,
-		sub.ID, sub.UserID, sub.Provider, sub.ProviderSubID, sub.Status,
+		sub.ID, sub.UserID, sub.Provider, sub.ProviderSubID, sub.ProviderCustomerID, sub.Status,
 		sub.CurrentPeriodStart, sub.CurrentPeriodEnd, sub.CreatedAt, sub.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("creating subscription: %w", err)
@@ -43,16 +44,16 @@ func (r *pgSubscriptionRepo) Create(ctx context.Context, sub *model.Subscription
 
 func (r *pgSubscriptionRepo) GetByUserID(ctx context.Context, userID uuid.UUID) (*model.Subscription, error) {
 	query := `
-		SELECT id, user_id, provider, provider_sub_id, status,
+		SELECT id, user_id, provider, provider_sub_id, provider_customer_id, status,
 			current_period_start, current_period_end, created_at, updated_at
 		FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`
 
 	var sub model.Subscription
 	err := r.pool.QueryRow(ctx, query, userID).Scan(
-		&sub.ID, &sub.UserID, &sub.Provider, &sub.ProviderSubID, &sub.Status,
+		&sub.ID, &sub.UserID, &sub.Provider, &sub.ProviderSubID, &sub.ProviderCustomerID, &sub.Status,
 		&sub.CurrentPeriodStart, &sub.CurrentPeriodEnd, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting subscription: %w", err)
@@ -62,16 +63,16 @@ func (r *pgSubscriptionRepo) GetByUserID(ctx context.Context, userID uuid.UUID) 
 
 func (r *pgSubscriptionRepo) GetByProviderSubID(ctx context.Context, providerSubID string) (*model.Subscription, error) {
 	query := `
-		SELECT id, user_id, provider, provider_sub_id, status,
+		SELECT id, user_id, provider, provider_sub_id, provider_customer_id, status,
 			current_period_start, current_period_end, created_at, updated_at
 		FROM subscriptions WHERE provider_sub_id = $1`
 
 	var sub model.Subscription
 	err := r.pool.QueryRow(ctx, query, providerSubID).Scan(
-		&sub.ID, &sub.UserID, &sub.Provider, &sub.ProviderSubID, &sub.Status,
+		&sub.ID, &sub.UserID, &sub.Provider, &sub.ProviderSubID, &sub.ProviderCustomerID, &sub.Status,
 		&sub.CurrentPeriodStart, &sub.CurrentPeriodEnd, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting subscription by provider: %w", err)

@@ -11,6 +11,7 @@ type Subscription struct {
 	UserID             uuid.UUID  `json:"user_id"`
 	Provider           string     `json:"provider"`
 	ProviderSubID      string     `json:"provider_sub_id"`
+	ProviderCustomerID string     `json:"provider_customer_id"`
 	Status             string     `json:"status"`
 	CurrentPeriodStart *time.Time `json:"current_period_start,omitempty"`
 	CurrentPeriodEnd   *time.Time `json:"current_period_end,omitempty"`

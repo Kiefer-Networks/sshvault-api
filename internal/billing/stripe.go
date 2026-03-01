@@ -19,15 +19,20 @@ type StripeProvider struct {
 	secretKey     string
 	webhookSecret string
 	priceID       string
+	appBaseURL    string
 	subRepo       repository.SubscriptionRepository
 }
 
-func NewStripeProvider(secretKey, webhookSecret, priceID string, subRepo repository.SubscriptionRepository) *StripeProvider {
+func NewStripeProvider(secretKey, webhookSecret, priceID, appBaseURL string, subRepo repository.SubscriptionRepository) *StripeProvider {
 	stripe.Key = secretKey
+	if appBaseURL == "" {
+		appBaseURL = "https://app.sshvault.app"
+	}
 	return &StripeProvider{
 		secretKey:     secretKey,
 		webhookSecret: webhookSecret,
 		priceID:       priceID,
+		appBaseURL:    appBaseURL,
 		subRepo:       subRepo,
 	}
 }
@@ -42,8 +47,8 @@ func (p *StripeProvider) CreateCheckoutSession(ctx context.Context, userID, emai
 			},
 		},
 		CustomerEmail: stripe.String(email),
-		SuccessURL:    stripe.String("https://app.shellvault.app/billing/success?session_id={CHECKOUT_SESSION_ID}"),
-		CancelURL:     stripe.String("https://app.shellvault.app/billing/cancel"),
+		SuccessURL:    stripe.String(p.appBaseURL + "/billing/success?session_id={CHECKOUT_SESSION_ID}"),
+		CancelURL:     stripe.String(p.appBaseURL + "/billing/cancel"),
 		Metadata: map[string]string{
 			"user_id": userID,
 		},
@@ -63,9 +68,13 @@ func (p *StripeProvider) CreatePortalSession(ctx context.Context, subscriptionID
 		return "", fmt.Errorf("subscription not found")
 	}
 
+	if sub.ProviderCustomerID == "" {
+		return "", fmt.Errorf("no customer ID associated with subscription")
+	}
+
 	params := &stripe.BillingPortalSessionParams{
-		Customer:  stripe.String(sub.ProviderSubID),
-		ReturnURL: stripe.String("https://app.shellvault.app/billing"),
+		Customer:  stripe.String(sub.ProviderCustomerID),
+		ReturnURL: stripe.String(p.appBaseURL + "/billing"),
 	}
 
 	s, err := portalsession.New(params)
@@ -97,6 +106,7 @@ func (p *StripeProvider) HandleWebhook(ctx context.Context, payload, signature s
 func (p *StripeProvider) handleCheckoutCompleted(ctx context.Context, raw json.RawMessage) error {
 	var data struct {
 		Subscription string            `json:"subscription"`
+		Customer     string            `json:"customer"`
 		Metadata     map[string]string `json:"metadata"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
@@ -109,9 +119,10 @@ func (p *StripeProvider) handleCheckoutCompleted(ctx context.Context, raw json.R
 	}
 
 	sub := &model.Subscription{
-		Provider:      "stripe",
-		ProviderSubID: data.Subscription,
-		Status:        model.SubStatusActive,
+		Provider:           "stripe",
+		ProviderSubID:      data.Subscription,
+		ProviderCustomerID: data.Customer,
+		Status:             model.SubStatusActive,
 	}
 
 	if err := parseUUID(userID, &sub.UserID); err != nil {
