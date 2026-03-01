@@ -79,7 +79,7 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
+	if len(req.NewPassword) < MinPasswordLength {
 		respondError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}

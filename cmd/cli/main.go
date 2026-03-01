@@ -161,7 +161,9 @@ func userInfoCmd() *cobra.Command {
 				hasOAuth := false
 				for oauthRows.Next() {
 					var provider, providerID, oaEmail string
-					oauthRows.Scan(&provider, &providerID, &oaEmail)
+					if err := oauthRows.Scan(&provider, &providerID, &oaEmail); err != nil {
+						continue
+					}
 					fmt.Printf("  - %s: %s (%s)\n", provider, providerID, oaEmail)
 					hasOAuth = true
 				}
@@ -218,7 +220,9 @@ func userInfoCmd() *cobra.Command {
 				for deviceRows.Next() {
 					var name, platform string
 					var lastSync *time.Time
-					deviceRows.Scan(&name, &platform, &lastSync)
+					if err := deviceRows.Scan(&name, &platform, &lastSync); err != nil {
+						continue
+					}
 					syncStr := "never"
 					if lastSync != nil {
 						syncStr = lastSync.Format("2006-01-02 15:04")
@@ -268,8 +272,10 @@ func userDeleteCmd() *cobra.Command {
 					return fmt.Errorf("soft delete: %w", err)
 				}
 				// Revoke all tokens
-				pool.Exec(ctx,
-					`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`, user.id)
+				if _, err := pool.Exec(ctx,
+					`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`, user.id); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to revoke tokens for %s: %v\n", user.email, err)
+				}
 				fmt.Printf("User %s soft-deleted. Data will be purged after 30 days.\n", user.email)
 			}
 			return nil
@@ -301,8 +307,10 @@ func userDeactivateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("deactivate: %w", err)
 			}
-			pool.Exec(ctx,
-				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`, user.id)
+			if _, err := pool.Exec(ctx,
+				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`, user.id); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to revoke tokens for %s: %v\n", user.email, err)
+			}
 
 			fmt.Printf("User %s deactivated. All sessions revoked.\n", user.email)
 			return nil
@@ -394,7 +402,9 @@ func billingInfoCmd() *cobra.Command {
 				var provider, providerSubID, status string
 				var periodStart, periodEnd *time.Time
 				var createdAt time.Time
-				rows.Scan(&subID, &provider, &providerSubID, &status, &periodStart, &periodEnd, &createdAt)
+				if err := rows.Scan(&subID, &provider, &providerSubID, &status, &periodStart, &periodEnd, &createdAt); err != nil {
+					continue
+				}
 
 				fmt.Printf("  Subscription: %s\n", subID)
 				fmt.Printf("  Provider:     %s\n", provider)

@@ -33,11 +33,11 @@ func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if devices == nil {
-		respondJSON(w, http.StatusOK, []interface{}{})
+		respondJSON(w, http.StatusOK, map[string]interface{}{"devices": []interface{}{}})
 		return
 	}
 
-	respondJSON(w, http.StatusOK, devices)
+	respondJSON(w, http.StatusOK, map[string]interface{}{"devices": devices})
 }
 
 func (h *DeviceHandler) DeleteDevice(w http.ResponseWriter, r *http.Request) {

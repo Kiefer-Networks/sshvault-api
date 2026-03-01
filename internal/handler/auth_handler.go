@@ -36,7 +36,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Password) < 8 {
+	if len(req.Password) < MinPasswordLength {
 		respondError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
@@ -195,7 +195,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
+	if len(req.NewPassword) < MinPasswordLength {
 		respondError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
