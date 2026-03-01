@@ -20,8 +20,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr string `envconfig:"SERVER_ADDR" default:":8080"`
-	Env  string `envconfig:"SERVER_ENV" default:"production"`
+	Addr       string `envconfig:"SERVER_ADDR" default:":8080"`
+	Env        string `envconfig:"SERVER_ENV" default:"production"`
+	AppBaseURL string `envconfig:"APP_BASE_URL" default:"https://app.sshvault.app"`
+	APIBaseURL string `envconfig:"API_BASE_URL" default:"https://api.sshvault.app"`
 }
 
 type DatabaseConfig struct {
@@ -47,7 +49,7 @@ type SMTPConfig struct {
 	Port int    `envconfig:"SMTP_PORT" default:"587"`
 	User string `envconfig:"SMTP_USER"`
 	Pass string `envconfig:"SMTP_PASS"`
-	From string `envconfig:"SMTP_FROM" default:"noreply@shellvault.app"`
+	From string `envconfig:"SMTP_FROM" default:"noreply@sshvault.app"`
 }
 
 type BillingConfig struct {

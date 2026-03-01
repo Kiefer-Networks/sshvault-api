@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -49,7 +50,7 @@ func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, er
 		&user.ID, &user.Email, &user.Password, &user.Verified,
 		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting user by id: %w", err)
@@ -67,7 +68,7 @@ func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User,
 		&user.ID, &user.Email, &user.Password, &user.Verified,
 		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting user by email: %w", err)
@@ -127,7 +128,7 @@ func (r *pgUserRepo) GetOAuthAccount(ctx context.Context, provider, providerID s
 		&account.ID, &account.UserID, &account.Provider,
 		&account.ProviderID, &account.Email, &account.CreatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting oauth account: %w", err)

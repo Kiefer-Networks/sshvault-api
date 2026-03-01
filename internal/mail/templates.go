@@ -2,7 +2,7 @@ package mail
 
 import "fmt"
 
-func VerificationEmailBody(token string) string {
+func VerificationEmailBody(apiBaseURL, token string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
@@ -11,7 +11,7 @@ func VerificationEmailBody(token string) string {
     <h2>Verify your ShellVault email</h2>
     <p>Please click the link below to verify your email address:</p>
     <p>
-      <a href="https://api.shellvault.app/v1/auth/verify-email?token=%s"
+      <a href="%s/v1/auth/verify-email?token=%s"
          style="display: inline-block; padding: 12px 24px; background: #007AFF; color: white; text-decoration: none; border-radius: 8px;">
         Verify Email
       </a>
@@ -22,10 +22,10 @@ func VerificationEmailBody(token string) string {
     <p style="color: #999; font-size: 12px;">&mdash; ShellVault by Kiefer Networks</p>
   </div>
 </body>
-</html>`, token)
+</html>`, apiBaseURL, token)
 }
 
-func PasswordResetEmailBody(token string) string {
+func PasswordResetEmailBody(appBaseURL, token string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
@@ -34,7 +34,7 @@ func PasswordResetEmailBody(token string) string {
     <h2>Reset your ShellVault password</h2>
     <p>Click the link below to reset your password. This link expires in 1 hour.</p>
     <p>
-      <a href="https://app.shellvault.app/reset-password?token=%s"
+      <a href="%s/reset-password?token=%s"
          style="display: inline-block; padding: 12px 24px; background: #007AFF; color: white; text-decoration: none; border-radius: 8px;">
         Reset Password
       </a>
@@ -45,5 +45,5 @@ func PasswordResetEmailBody(token string) string {
     <p style="color: #999; font-size: 12px;">&mdash; ShellVault by Kiefer Networks</p>
   </div>
 </body>
-</html>`, token)
+</html>`, appBaseURL, token)
 }

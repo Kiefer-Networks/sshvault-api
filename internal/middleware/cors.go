@@ -6,7 +6,7 @@ import (
 
 func CORSOptions(allowedOrigins []string) cors.Options {
 	if len(allowedOrigins) == 0 {
-		allowedOrigins = []string{"https://shellvault.app", "https://app.shellvault.app"}
+		allowedOrigins = []string{"https://sshvault.app", "https://app.sshvault.app"}
 	}
 	return cors.Options{
 		AllowedOrigins:   allowedOrigins,

@@ -8,7 +8,7 @@ info:
     url: https://kiefer-networks.de
 
 servers:
-  - url: https://api.shellvault.app
+  - url: https://api.sshvault.app
     description: Production
   - url: http://localhost:8080
     description: Local Development

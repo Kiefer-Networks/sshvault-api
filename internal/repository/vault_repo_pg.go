@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,7 +30,7 @@ func (r *pgVaultRepo) GetByUserID(ctx context.Context, userID uuid.UUID) (*model
 		&vault.ID, &vault.UserID, &vault.Version, &vault.Blob,
 		&vault.Checksum, &vault.UpdatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting vault: %w", err)
@@ -71,7 +72,7 @@ func (r *pgVaultRepo) UpdateBlob(ctx context.Context, userID uuid.UUID, expected
 		&vault.ID, &vault.UserID, &vault.Version, &vault.Blob,
 		&vault.Checksum, &vault.UpdatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // version conflict
 		}
 		return nil, fmt.Errorf("updating vault blob: %w", err)
@@ -131,7 +132,7 @@ func (r *pgVaultRepo) GetHistoryVersion(ctx context.Context, vaultID uuid.UUID, 
 		&entry.ID, &entry.VaultID, &entry.Version, &entry.Blob,
 		&entry.Checksum, &entry.CreatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting vault history version: %w", err)

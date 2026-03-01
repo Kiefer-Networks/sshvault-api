@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.shellvault.rule=Host(`api.shellvault.app`)"
+      - "traefik.http.routers.shellvault.rule=Host(`api.sshvault.app`)"
       - "traefik.http.routers.shellvault.tls.certresolver=letsencrypt"
       - "traefik.http.services.shellvault.loadbalancer.server.port=8080"
 
@@ -62,7 +62,7 @@ services:
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencrypt.acme.email=admin@shellvault.app"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@sshvault.app"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
     ports:
       - "80:80"

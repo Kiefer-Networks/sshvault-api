@@ -53,7 +53,7 @@ This starts the server, PostgreSQL, and Traefik (TLS).
 
 ## API
 
-Base URL: `https://api.shellvault.app`
+Base URL: `https://api.sshvault.app`
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|

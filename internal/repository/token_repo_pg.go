@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,7 +49,7 @@ func (r *pgTokenRepo) GetByHash(ctx context.Context, tokenHash string) (*model.R
 		&token.ID, &token.UserID, &token.TokenHash, &token.DeviceName,
 		&token.ExpiresAt, &token.CreatedAt, &token.Revoked)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting refresh token: %w", err)
