@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,7 +49,7 @@ func (r *pgVerificationRepo) GetByHash(ctx context.Context, tokenHash, kind stri
 		&t.ID, &t.UserID, &t.TokenHash, &t.Kind,
 		&t.ExpiresAt, &t.Used, &t.CreatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("getting verification token: %w", err)

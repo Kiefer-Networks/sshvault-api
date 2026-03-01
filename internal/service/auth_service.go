@@ -114,8 +114,18 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 	log.Info().Str("email", req.Email).Str("user_id", user.ID.String()).Msg("user registered")
 
 	if s.mailer != nil {
-		verifyToken := uuid.New().String()
-		if err := s.mailer.SendVerificationEmail(ctx, user.Email, verifyToken); err != nil {
+		rawToken := uuid.New().String()
+		hash := auth.HashToken(rawToken)
+
+		vt := &repository.VerificationToken{
+			UserID:    user.ID,
+			TokenHash: hash,
+			Kind:      repository.TokenKindEmailVerify,
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+		if err := s.verifyRepo.Create(ctx, vt); err != nil {
+			log.Warn().Err(err).Str("email", req.Email).Msg("failed to store verification token")
+		} else if err := s.mailer.SendVerificationEmail(ctx, user.Email, rawToken); err != nil {
 			log.Warn().Err(err).Str("email", req.Email).Msg("failed to send verification email")
 		}
 	}

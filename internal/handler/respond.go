@@ -26,7 +26,6 @@ func respondError(w http.ResponseWriter, status int, message string) {
 func decodeJSON(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	return decoder.Decode(v)
 }
 

@@ -95,7 +95,7 @@ func main() {
 	} else {
 		mailer = mail.NewNoopMailer()
 	}
-	mailService := service.NewMailService(mailer)
+	mailService := service.NewMailService(mailer, cfg.Server.AppBaseURL, cfg.Server.APIBaseURL)
 
 	// Billing provider
 	var billingProvider billing.Provider
@@ -105,6 +105,7 @@ func main() {
 			cfg.Billing.StripeSecretKey,
 			cfg.Billing.StripeWebhookSecret,
 			cfg.Billing.StripePriceID,
+			cfg.Server.AppBaseURL,
 			subRepo,
 		)
 	} else {
@@ -184,7 +185,7 @@ func main() {
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
 			r.Post("/oauth/{provider}", authHandler.OAuth)
-			r.Post("/verify-email", authHandler.VerifyEmail)
+			r.Get("/verify-email", authHandler.VerifyEmail)
 			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)
 		})
