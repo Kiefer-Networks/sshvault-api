@@ -105,7 +105,7 @@ func main() {
 			cfg.Billing.StripeSecretKey,
 			cfg.Billing.StripeWebhookSecret,
 			cfg.Billing.StripePriceID,
-			cfg.Server.AppBaseURL,
+			cfg.Server.APIBaseURL,
 			subRepo,
 			mailer,
 		)
@@ -271,6 +271,10 @@ func main() {
 			r.Post("/billing/checkout", billingHandler.CreateCheckout)
 			r.Post("/billing/portal", billingHandler.CreatePortal)
 		})
+
+		// Billing pages (public, shown after Stripe redirect)
+		r.Get("/billing/success", billingHandler.SuccessPage)
+		r.Get("/billing/cancel", billingHandler.CancelPage)
 
 		// Webhooks (public, signature-verified)
 		r.Post("/webhooks/stripe", billingHandler.StripeWebhook)

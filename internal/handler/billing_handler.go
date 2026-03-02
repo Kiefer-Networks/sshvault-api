@@ -121,6 +121,64 @@ func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (h *BillingHandler) SuccessPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment Successful – ShellVault</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; color: #333; }
+    .card { background: white; border-radius: 16px; padding: 48px; max-width: 420px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+    .icon { font-size: 64px; margin-bottom: 16px; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    p { color: #666; line-height: 1.6; margin: 8px 0; }
+    .hint { font-size: 14px; color: #999; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Payment Successful</h1>
+    <p>Your ShellVault Sync subscription is now active.</p>
+    <p>You can close this tab and return to the app.</p>
+    <p class="hint">Your subscription status will update automatically.</p>
+  </div>
+</body>
+</html>`))
+}
+
+func (h *BillingHandler) CancelPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment Cancelled – ShellVault</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; color: #333; }
+    .card { background: white; border-radius: 16px; padding: 48px; max-width: 420px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+    .icon { font-size: 64px; margin-bottom: 16px; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    p { color: #666; line-height: 1.6; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">↩️</div>
+    <h1>Payment Cancelled</h1>
+    <p>No worries — you can activate Sync anytime from the app.</p>
+    <p>You can close this tab and return to ShellVault.</p>
+  </div>
+</body>
+</html>`))
+}
+
 // readWebhookBody reads and limits a webhook request body to 1 MB.
 func readWebhookBody(r *http.Request) ([]byte, error) {
 	defer func() { _ = r.Body.Close() }()

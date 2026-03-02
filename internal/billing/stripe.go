@@ -22,21 +22,21 @@ type StripeProvider struct {
 	secretKey     string
 	webhookSecret string
 	priceID       string
-	appBaseURL    string
+	apiBaseURL    string
 	subRepo       repository.SubscriptionRepository
 	mailer        mail.Mailer
 }
 
-func NewStripeProvider(secretKey, webhookSecret, priceID, appBaseURL string, subRepo repository.SubscriptionRepository, mailer mail.Mailer) *StripeProvider {
+func NewStripeProvider(secretKey, webhookSecret, priceID, apiBaseURL string, subRepo repository.SubscriptionRepository, mailer mail.Mailer) *StripeProvider {
 	stripe.Key = secretKey
-	if appBaseURL == "" {
-		appBaseURL = "https://app.sshvault.app"
+	if apiBaseURL == "" {
+		apiBaseURL = "https://api.sshvault.app"
 	}
 	return &StripeProvider{
 		secretKey:     secretKey,
 		webhookSecret: webhookSecret,
 		priceID:       priceID,
-		appBaseURL:    appBaseURL,
+		apiBaseURL:    apiBaseURL,
 		subRepo:       subRepo,
 		mailer:        mailer,
 	}
@@ -70,8 +70,8 @@ func (p *StripeProvider) CreateCheckoutSession(ctx context.Context, userID, emai
 		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
 			Enabled: stripe.Bool(true),
 		},
-		SuccessURL: stripe.String(p.appBaseURL + "/billing/success?session_id={CHECKOUT_SESSION_ID}"),
-		CancelURL:  stripe.String(p.appBaseURL + "/billing/cancel"),
+		SuccessURL: stripe.String(p.apiBaseURL + "/v1/billing/success?session_id={CHECKOUT_SESSION_ID}"),
+		CancelURL:  stripe.String(p.apiBaseURL + "/v1/billing/cancel"),
 		Metadata: map[string]string{
 			"user_id": userID,
 		},
@@ -97,7 +97,7 @@ func (p *StripeProvider) CreatePortalSession(ctx context.Context, subscriptionID
 
 	params := &stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(sub.ProviderCustomerID),
-		ReturnURL: stripe.String(p.appBaseURL + "/billing"),
+		ReturnURL: stripe.String(p.apiBaseURL + "/v1/billing/success"),
 	}
 
 	s, err := portalsession.New(params)
