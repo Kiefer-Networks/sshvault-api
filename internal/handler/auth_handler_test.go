@@ -18,6 +18,7 @@ func newAuthHandler() *AuthHandler {
 		authService: nil,
 		apple:       nil,
 		google:      nil,
+		audit:       nil,
 	}
 }
 

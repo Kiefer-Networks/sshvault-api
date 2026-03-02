@@ -140,6 +140,25 @@ func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int
 	return result.RowsAffected(), nil
 }
 
+func (r *pgUserRepo) GetPurgableUserIDs(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1`, olderThan)
+	if err != nil {
+		return nil, fmt.Errorf("getting purgable user ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning user id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *pgUserRepo) CreateOAuthAccount(ctx context.Context, account *model.OAuthAccount) error {
 	query := `
 		INSERT INTO oauth_accounts (id, user_id, provider, provider_id, email, created_at)

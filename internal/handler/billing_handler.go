@@ -6,18 +6,21 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
 type BillingHandler struct {
 	billingService *service.BillingService
 	userService    *service.UserService
+	audit          *audit.Logger
 }
 
-func NewBillingHandler(billingService *service.BillingService, userService *service.UserService) *BillingHandler {
+func NewBillingHandler(billingService *service.BillingService, userService *service.UserService, auditLogger *audit.Logger) *BillingHandler {
 	return &BillingHandler{
 		billingService: billingService,
 		userService:    userService,
+		audit:          auditLogger,
 	}
 }
 
@@ -33,6 +36,7 @@ func (h *BillingHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActStatusCheck).Send()
 	respondJSON(w, http.StatusOK, status)
 }
 
@@ -54,6 +58,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActCheckout).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
@@ -69,6 +74,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActPortal).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
@@ -82,6 +88,12 @@ func (h *BillingHandler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 	signature := r.Header.Get("Stripe-Signature")
 	if err := h.billingService.HandleWebhook(r.Context(), "stripe", string(body), signature); err != nil {
 		log.Warn().Err(err).Msg("stripe webhook processing failed")
+		h.audit.LogFromRequest(r, audit.CatWebhook, audit.ActWebhookStripe).
+			Level(audit.LevelWarn).
+			Detail("error", err.Error()).
+			Send()
+	} else {
+		h.audit.LogFromRequest(r, audit.CatWebhook, audit.ActWebhookStripe).Send()
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -96,6 +108,12 @@ func (h *BillingHandler) AppleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.billingService.HandleWebhook(r.Context(), "apple", string(body), ""); err != nil {
 		log.Warn().Err(err).Msg("apple webhook processing failed")
+		h.audit.LogFromRequest(r, audit.CatWebhook, audit.ActWebhookApple).
+			Level(audit.LevelWarn).
+			Detail("error", err.Error()).
+			Send()
+	} else {
+		h.audit.LogFromRequest(r, audit.CatWebhook, audit.ActWebhookApple).Send()
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -110,6 +128,12 @@ func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.billingService.HandleWebhook(r.Context(), "google", string(body), ""); err != nil {
 		log.Warn().Err(err).Msg("google webhook processing failed")
+		h.audit.LogFromRequest(r, audit.CatWebhook, audit.ActWebhookGoogle).
+			Level(audit.LevelWarn).
+			Detail("error", err.Error()).
+			Send()
+	} else {
+		h.audit.LogFromRequest(r, audit.CatWebhook, audit.ActWebhookGoogle).Send()
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})

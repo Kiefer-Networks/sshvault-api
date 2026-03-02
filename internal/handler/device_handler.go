@@ -5,17 +5,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/model"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
 type DeviceHandler struct {
 	deviceRepo repository.DeviceRepository
+	audit      *audit.Logger
 }
 
-func NewDeviceHandler(deviceRepo repository.DeviceRepository) *DeviceHandler {
+func NewDeviceHandler(deviceRepo repository.DeviceRepository, auditLogger *audit.Logger) *DeviceHandler {
 	return &DeviceHandler{
 		deviceRepo: deviceRepo,
+		audit:      auditLogger,
 	}
 }
 
@@ -61,6 +64,9 @@ func (h *DeviceHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatDevice, audit.ActDeviceRegister).
+		Resource("device", device.ID.String()).
+		Send()
 	respondJSON(w, http.StatusCreated, map[string]any{
 		"id":       device.ID,
 		"name":     device.Name,
@@ -79,6 +85,8 @@ func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to list devices")
 		return
 	}
+
+	h.audit.LogFromRequest(r, audit.CatDevice, audit.ActDeviceList).Send()
 
 	if devices == nil {
 		respondJSON(w, http.StatusOK, map[string]any{"devices": []any{}})
@@ -105,5 +113,8 @@ func (h *DeviceHandler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatDevice, audit.ActDeviceDelete).
+		Resource("device", deviceID.String()).
+		Send()
 	w.WriteHeader(http.StatusNoContent)
 }

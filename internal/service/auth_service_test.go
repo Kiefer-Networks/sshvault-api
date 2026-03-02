@@ -65,6 +65,10 @@ func (m *mockUserRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return
 
 func (m *mockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) (int64, error) { return 0, nil }
 
+func (m *mockUserRepo) GetPurgableUserIDs(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 func (m *mockUserRepo) CreateOAuthAccount(_ context.Context, account *model.OAuthAccount) error {
 	account.ID = uuid.New()
 	key := account.Provider + ":" + account.ProviderID

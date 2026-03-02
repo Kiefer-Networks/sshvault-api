@@ -5,18 +5,21 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
 type VaultHandler struct {
 	vaultService   *service.VaultService
 	billingService *service.BillingService
+	audit          *audit.Logger
 }
 
-func NewVaultHandler(vaultService *service.VaultService, billingService *service.BillingService) *VaultHandler {
+func NewVaultHandler(vaultService *service.VaultService, billingService *service.BillingService, auditLogger *audit.Logger) *VaultHandler {
 	return &VaultHandler{
 		vaultService:   vaultService,
 		billingService: billingService,
+		audit:          auditLogger,
 	}
 }
 
@@ -37,6 +40,9 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPull).
+		Resource("vault", userID.String()).
+		Send()
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -82,6 +88,11 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPush).
+		Resource("vault", userID.String()).
+		Detail("version", req.Version).
+		Detail("blob_size", len(req.Blob)).
+		Send()
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -97,6 +108,7 @@ func (h *VaultHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatVault, audit.ActHistoryView).Send()
 	respondJSON(w, http.StatusOK, map[string]any{"history": entries})
 }
 
@@ -119,5 +131,8 @@ func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatVault, audit.ActHistoryView).
+		Detail("version", version).
+		Send()
 	respondJSON(w, http.StatusOK, resp)
 }

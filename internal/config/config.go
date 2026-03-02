@@ -17,6 +17,8 @@ type Config struct {
 	Vault    VaultConfig
 	Rate     RateConfig
 	Backup   BackupConfig
+	Log      LogConfig
+	Audit    AuditConfig
 }
 
 type ServerConfig struct {
@@ -76,6 +78,19 @@ type BackupConfig struct {
 	Dir       string        `envconfig:"BACKUP_DIR" default:"./backups"`
 	Interval  time.Duration `envconfig:"BACKUP_INTERVAL" default:"24h"`
 	Retention int           `envconfig:"BACKUP_RETENTION" default:"7"`
+}
+
+type LogConfig struct {
+	FilePath   string `envconfig:"LOG_FILE_PATH" default:""`
+	MaxSizeMB  int    `envconfig:"LOG_MAX_SIZE_MB" default:"100"`
+	MaxAgeDays int    `envconfig:"LOG_MAX_AGE_DAYS" default:"90"`
+	MaxBackups int    `envconfig:"LOG_MAX_BACKUPS" default:"10"`
+	Compress   bool   `envconfig:"LOG_COMPRESS" default:"true"`
+}
+
+type AuditConfig struct {
+	RetentionDays int `envconfig:"AUDIT_RETENTION_DAYS" default:"365"`
+	BufferSize    int `envconfig:"AUDIT_BUFFER_SIZE" default:"1024"`
 }
 
 func (c *Config) IsDevelopment() bool {

@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
@@ -15,13 +16,15 @@ type AuthHandler struct {
 	authService *service.AuthService
 	apple       auth.OAuthProvider
 	google      auth.OAuthProvider
+	audit       *audit.Logger
 }
 
-func NewAuthHandler(authService *service.AuthService, apple, google auth.OAuthProvider) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService, apple, google auth.OAuthProvider, auditLogger *audit.Logger) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
 		apple:       apple,
 		google:      google,
+		audit:       auditLogger,
 	}
 }
 
@@ -44,6 +47,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.Register(r.Context(), &req)
 	if err != nil {
+		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActRegister).
+			Level(audit.LevelWarn).
+			Detail("email", req.Email).
+			Detail("error", err.Error()).
+			Send()
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "already registered"):
@@ -57,6 +65,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActRegister).
+		Actor(resp.User.ID, req.Email).
+		Resource("user", resp.User.ID.String()).
+		Send()
 	respondJSON(w, http.StatusCreated, resp)
 }
 
@@ -76,10 +88,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.Login(r.Context(), &req)
 	if err != nil {
+		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActLoginFailed).
+			Level(audit.LevelWarn).
+			Detail("email", req.Email).
+			Send()
 		respondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActLogin).
+		Actor(resp.User.ID, resp.User.Email).
+		Send()
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -101,6 +120,9 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActRefreshToken).
+		Actor(resp.User.ID, resp.User.Email).
+		Send()
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -116,6 +138,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.authService.Logout(r.Context(), req.RefreshToken); err != nil {
 		log.Warn().Err(err).Msg("logout token revocation failed")
 	}
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActLogout).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
@@ -159,10 +182,19 @@ func (h *AuthHandler) OAuth(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.OAuthLogin(r.Context(), oauthProvider, req.IDToken, req.DeviceName)
 	if err != nil {
+		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActOAuthLogin).
+			Level(audit.LevelWarn).
+			Detail("provider", provider).
+			Detail("error", err.Error()).
+			Send()
 		respondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActOAuthLogin).
+		Actor(resp.User.ID, resp.User.Email).
+		Detail("provider", provider).
+		Send()
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -178,6 +210,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActVerifyEmail).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "email verified"})
 }
 
@@ -195,6 +228,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		log.Warn().Err(err).Msg("forgot password processing failed")
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActForgotPassword).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "if the email exists, a reset link has been sent"})
 }
 
@@ -223,6 +257,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActResetPassword).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "password reset successful"})
 }
 
@@ -238,5 +273,6 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActLogoutAll).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "all sessions revoked"})
 }

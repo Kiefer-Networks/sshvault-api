@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,7 +20,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/natefinch/lumberjack.v2"
 
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
 	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/config"
@@ -39,11 +42,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup logging
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	// Setup logging — ISO 8601 for legal compliance
+	zerolog.TimeFieldFormat = time.RFC3339
+
+	var writers []io.Writer
 	if cfg.IsDevelopment() {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+		writers = append(writers, zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	} else {
+		writers = append(writers, os.Stdout)
 	}
+
+	// Optional JSON log file with rotation
+	if cfg.Log.FilePath != "" {
+		fileWriter := &lumberjack.Logger{
+			Filename:   cfg.Log.FilePath,
+			MaxSize:    cfg.Log.MaxSizeMB,
+			MaxAge:     cfg.Log.MaxAgeDays,
+			MaxBackups: cfg.Log.MaxBackups,
+			Compress:   cfg.Log.Compress,
+		}
+		writers = append(writers, fileWriter)
+	}
+
+	log.Logger = zerolog.New(io.MultiWriter(writers...)).With().Timestamp().Logger()
 
 	log.Info().Str("env", cfg.Env()).Str("addr", cfg.Server.Addr).Msg("starting shellvault-server")
 
@@ -115,6 +136,10 @@ func main() {
 		billingProvider = billing.NewNoopProvider()
 	}
 
+	// Audit logger (async, buffered)
+	auditRepo := audit.NewRepository(pool)
+	auditLogger := audit.NewLogger(auditRepo, cfg.Audit.BufferSize)
+
 	// Brute force protection (DB-backed, persists across restarts)
 	bruteForceGuard := mw.NewBruteForceGuard(pool)
 
@@ -169,6 +194,7 @@ func main() {
 	}()
 
 	// Background purge of soft-deleted users after 30 days (every 24 hours)
+	// Also anonymizes audit logs for purged users (GDPR compliance)
 	bgWg.Add(1)
 	go func() {
 		defer bgWg.Done()
@@ -180,11 +206,50 @@ func main() {
 				return
 			case <-ticker.C:
 				cutoff := time.Now().Add(-30 * 24 * time.Hour)
+
+				// Get user IDs before purge for audit anonymization
+				purgableIDs, err := userRepo.GetPurgableUserIDs(bgCtx, cutoff)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to get purgable user ids")
+				}
+
 				n, err := userRepo.PurgeDeleted(bgCtx, cutoff)
 				if err != nil {
 					log.Error().Err(err).Msg("failed to purge deleted users")
 				} else if n > 0 {
 					log.Info().Int64("count", n).Msg("purged soft-deleted users")
+				}
+
+				// Anonymize audit logs for purged users
+				for _, uid := range purgableIDs {
+					affected, err := auditRepo.AnonymizeUser(bgCtx, uid)
+					if err != nil {
+						log.Error().Err(err).Str("user_id", uid.String()).Msg("failed to anonymize audit logs")
+					} else if affected > 0 {
+						log.Info().Int("count", affected).Str("user_id", uid.String()).Msg("anonymized audit logs for purged user")
+					}
+				}
+			}
+		}
+	}()
+
+	// Weekly audit log retention cleanup
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		ticker := time.NewTicker(7 * 24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				cutoff := time.Now().AddDate(0, 0, -cfg.Audit.RetentionDays)
+				n, err := auditRepo.PurgeOld(bgCtx, cutoff)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to purge old audit logs")
+				} else if n > 0 {
+					log.Info().Int("count", n).Msg("purged old audit logs")
 				}
 			}
 		}
@@ -208,11 +273,12 @@ func main() {
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
-	authHandler := handler.NewAuthHandler(authService, appleOAuth, googleOAuth)
-	vaultHandler := handler.NewVaultHandler(vaultService, billingService)
-	userHandler := handler.NewUserHandler(userService)
-	deviceHandler := handler.NewDeviceHandler(deviceRepo)
-	billingHandler := handler.NewBillingHandler(billingService, userService)
+	authHandler := handler.NewAuthHandler(authService, appleOAuth, googleOAuth, auditLogger)
+	vaultHandler := handler.NewVaultHandler(vaultService, billingService, auditLogger)
+	userHandler := handler.NewUserHandler(userService, auditLogger)
+	deviceHandler := handler.NewDeviceHandler(deviceRepo, auditLogger)
+	billingHandler := handler.NewBillingHandler(billingService, userService, auditLogger)
+	auditHandler := handler.NewAuditHandler(auditRepo)
 
 	// Middleware
 	authMiddleware := mw.NewAuthMiddleware(jwtManager)
@@ -281,6 +347,9 @@ func main() {
 			r.Get("/devices", deviceHandler.ListDevices)
 			r.Delete("/devices/{id}", deviceHandler.DeleteDevice)
 
+			// Audit
+			r.Get("/audit", auditHandler.GetAuditLogs)
+
 			// Billing (only if enabled)
 			r.Get("/billing/status", billingHandler.GetStatus)
 			r.Post("/billing/checkout", billingHandler.CreateCheckout)
@@ -321,6 +390,10 @@ func main() {
 		rateLimiter.Stop()
 		authRateLimiter.Stop()
 
+		// Flush audit logs
+		auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActShutdown})
+		auditLogger.Stop()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -329,6 +402,7 @@ func main() {
 		}
 	}()
 
+	auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActStartup, Details: map[string]any{"addr": cfg.Server.Addr}})
 	log.Info().Str("addr", cfg.Server.Addr).Msg("server listening")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal().Err(err).Msg("server failed")
