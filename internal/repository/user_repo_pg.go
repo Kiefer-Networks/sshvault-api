@@ -99,6 +99,34 @@ func (r *pgUserRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int64, error) {
+	// Delete all related data for soft-deleted users older than the cutoff.
+	// Order matters: child tables first, then the user.
+	queries := []string{
+		`DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM verification_tokens WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM vault_history WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM vaults WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM devices WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM oauth_accounts WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		`DELETE FROM login_attempts WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+	}
+
+	for _, q := range queries {
+		if _, err := r.pool.Exec(ctx, q, olderThan); err != nil {
+			return 0, fmt.Errorf("purging related data: %w", err)
+		}
+	}
+
+	// Finally delete the user rows
+	result, err := r.pool.Exec(ctx, `DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("purging deleted users: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
 func (r *pgUserRepo) CreateOAuthAccount(ctx context.Context, account *model.OAuthAccount) error {
 	query := `
 		INSERT INTO oauth_accounts (id, user_id, provider, provider_id, email, created_at)

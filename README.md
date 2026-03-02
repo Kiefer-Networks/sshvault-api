@@ -166,6 +166,30 @@ Base URL: `https://api.example.com`
 
 Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
 
+## Stripe Webhooks
+
+When using Stripe billing, you must configure a webhook endpoint in the [Stripe Dashboard](https://dashboard.stripe.com/webhooks):
+
+**Endpoint URL:** `https://api.example.com/v1/webhooks/stripe`
+
+**Required events (Webhook scope):**
+
+| Event | Purpose |
+|---|---|
+| `checkout.session.completed` | Activates subscription after successful payment |
+| `customer.subscription.updated` | Syncs plan changes, renewals, and payment failures |
+| `customer.subscription.deleted` | Marks subscription as canceled |
+
+Set `STRIPE_WEBHOOK_SECRET` in your `.env` to the signing secret from the Stripe Dashboard (starts with `whsec_`). The server verifies every webhook signature — unsigned or tampered payloads are rejected.
+
+**Minimal setup:**
+
+1. Go to [Stripe Dashboard → Webhooks](https://dashboard.stripe.com/webhooks)
+2. Click "Add endpoint"
+3. Enter your endpoint URL
+4. Select the three events listed above
+5. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`
+
 ## Configuration
 
 See [`.env.example`](.env.example) for all configuration options.
@@ -224,7 +248,7 @@ For self-hosted instances:
 - `Cross-Origin-Resource-Policy: same-origin`
 - `Referrer-Policy: no-referrer`
 - `Cache-Control: no-store`
-- `Permissions-Policy` disables camera, microphone, geolocation, FLoC
+- `Permissions-Policy` disables camera, microphone, geolocation, Topics API
 
 ## License
 

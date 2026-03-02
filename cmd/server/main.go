@@ -133,6 +133,52 @@ func main() {
 		}
 	}()
 
+	// Background cleanup of expired tokens (every 6 hours)
+	go func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				n, err := tokenRepo.DeleteExpired(bgCtx)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to clean expired refresh tokens")
+				} else if n > 0 {
+					log.Info().Int64("count", n).Msg("cleaned expired refresh tokens")
+				}
+
+				m, err := verifyRepo.DeleteExpired(bgCtx)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to clean expired verification tokens")
+				} else if m > 0 {
+					log.Info().Int64("count", m).Msg("cleaned expired verification tokens")
+				}
+			}
+		}
+	}()
+
+	// Background purge of soft-deleted users after 30 days (every 24 hours)
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				cutoff := time.Now().Add(-30 * 24 * time.Hour)
+				n, err := userRepo.PurgeDeleted(bgCtx, cutoff)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to purge deleted users")
+				} else if n > 0 {
+					log.Info().Int64("count", n).Msg("purged soft-deleted users")
+				}
+			}
+		}
+	}()
+
 	// Services
 	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, jwtManager, mailService, bruteForceGuard)
 	vaultService := service.NewVaultService(vaultRepo, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
