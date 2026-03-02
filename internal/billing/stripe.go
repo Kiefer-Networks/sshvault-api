@@ -62,6 +62,10 @@ func (p *StripeProvider) CreateCheckoutSession(ctx context.Context, userID, emai
 				Quantity: stripe.Int64(1),
 			},
 		},
+		BillingAddressCollection: stripe.String("required"),
+		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
+			Enabled: stripe.Bool(true),
+		},
 		SuccessURL: stripe.String(p.appBaseURL + "/billing/success?session_id={CHECKOUT_SESSION_ID}"),
 		CancelURL:  stripe.String(p.appBaseURL + "/billing/cancel"),
 		Metadata: map[string]string{
