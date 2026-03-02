@@ -107,6 +107,7 @@ func main() {
 			cfg.Billing.StripePriceID,
 			cfg.Server.AppBaseURL,
 			subRepo,
+			mailer,
 		)
 	} else {
 		billingProvider = billing.NewNoopProvider()
