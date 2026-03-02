@@ -761,7 +761,7 @@ func createBackup(databaseURL, dir string) (string, error) {
 	// Verify file was created and has content
 	info, err := os.Stat(path)
 	if err != nil || info.Size() == 0 {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", fmt.Errorf("backup file is empty or missing")
 	}
 

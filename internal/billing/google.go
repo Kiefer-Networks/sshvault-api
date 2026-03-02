@@ -15,11 +15,11 @@ func NewGoogleProvider(serviceAccountPath string) *GoogleProvider {
 }
 
 func (p *GoogleProvider) CreateCheckoutSession(_ context.Context, _, _ string) (string, error) {
-	return "", fmt.Errorf("Google subscriptions are managed via Google Play")
+	return "", fmt.Errorf("google subscriptions are managed via Google Play")
 }
 
 func (p *GoogleProvider) CreatePortalSession(_ context.Context, _ string) (string, error) {
-	return "", fmt.Errorf("Google subscriptions are managed via Google Play")
+	return "", fmt.Errorf("google subscriptions are managed via Google Play")
 }
 
 func (p *GoogleProvider) HandleWebhook(ctx context.Context, payload, signature string) error {
