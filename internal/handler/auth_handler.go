@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -43,7 +44,16 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.Register(r.Context(), &req)
 	if err != nil {
-		respondError(w, http.StatusConflict, err.Error())
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "already registered"):
+			respondError(w, http.StatusConflict, msg)
+		case strings.Contains(msg, "invalid email"):
+			respondError(w, http.StatusBadRequest, msg)
+		default:
+			log.Error().Err(err).Msg("registration failed")
+			respondError(w, http.StatusInternalServerError, "registration failed")
+		}
 		return
 	}
 

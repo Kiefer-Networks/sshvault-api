@@ -55,6 +55,9 @@ func (r *pgDeviceRepo) GetByUserID(ctx context.Context, userID uuid.UUID) ([]mod
 		}
 		devices = append(devices, d)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating rows: %w", err)
+	}
 	return devices, nil
 }
 

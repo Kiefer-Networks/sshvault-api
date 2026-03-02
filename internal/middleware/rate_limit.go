@@ -13,6 +13,7 @@ type RateLimiter struct {
 	mu       sync.RWMutex
 	rps      rate.Limit
 	burst    int
+	stop     chan struct{}
 }
 
 type visitor struct {
@@ -25,9 +26,15 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 		visitors: make(map[string]*visitor),
 		rps:      rate.Limit(rps),
 		burst:    burst,
+		stop:     make(chan struct{}),
 	}
 	go rl.cleanup()
 	return rl
+}
+
+// Stop signals the background cleanup goroutine to exit.
+func (rl *RateLimiter) Stop() {
+	close(rl.stop)
 }
 
 func (rl *RateLimiter) getVisitor(key string) *rate.Limiter {
@@ -46,15 +53,21 @@ func (rl *RateLimiter) getVisitor(key string) *rate.Limiter {
 }
 
 func (rl *RateLimiter) cleanup() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
 	for {
-		time.Sleep(time.Minute)
-		rl.mu.Lock()
-		for key, v := range rl.visitors {
-			if time.Since(v.lastSeen) > 3*time.Minute {
-				delete(rl.visitors, key)
+		select {
+		case <-rl.stop:
+			return
+		case <-ticker.C:
+			rl.mu.Lock()
+			for key, v := range rl.visitors {
+				if time.Since(v.lastSeen) > 3*time.Minute {
+					delete(rl.visitors, key)
+				}
 			}
+			rl.mu.Unlock()
 		}
-		rl.mu.Unlock()
 	}
 }
 

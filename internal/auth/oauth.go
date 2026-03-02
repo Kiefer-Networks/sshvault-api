@@ -138,6 +138,10 @@ func (g *GoogleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUs
 		return nil, fmt.Errorf("missing sub in Google token")
 	}
 
+	if result.Verified != "true" {
+		return nil, fmt.Errorf("google email not verified")
+	}
+
 	return &OAuthUserInfo{
 		Provider:   "google",
 		ProviderID: result.Sub,

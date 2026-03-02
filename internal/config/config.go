@@ -25,6 +25,7 @@ type ServerConfig struct {
 	AppBaseURL     string `envconfig:"APP_BASE_URL" default:"https://app.sshvault.app"`
 	APIBaseURL     string `envconfig:"API_BASE_URL" default:"https://api.sshvault.app"`
 	TrustedProxies string `envconfig:"TRUSTED_PROXIES" default:"127.0.0.1/8,::1/128"`
+	CORSOrigins    string `envconfig:"CORS_ORIGINS"`
 }
 
 type DatabaseConfig struct {

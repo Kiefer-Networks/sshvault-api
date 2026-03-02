@@ -115,12 +115,21 @@ func main() {
 	// Brute force protection (DB-backed, persists across restarts)
 	bruteForceGuard := mw.NewBruteForceGuard(pool)
 
+	// Cancellable context for background goroutines
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+
 	// Background cleanup of old login attempts (every hour)
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			bruteForceGuard.Cleanup(context.Background())
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				bruteForceGuard.Cleanup(bgCtx)
+			}
 		}
 	}()
 
@@ -145,7 +154,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService, appleOAuth, googleOAuth)
 	vaultHandler := handler.NewVaultHandler(vaultService, billingService)
 	userHandler := handler.NewUserHandler(userService)
-	deviceHandler := handler.NewDeviceHandler(deviceRepo, tokenRepo)
+	deviceHandler := handler.NewDeviceHandler(deviceRepo)
 	billingHandler := handler.NewBillingHandler(billingService, userService)
 
 	// Middleware
@@ -163,7 +172,7 @@ func main() {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(rateLimiter.Limit)
 	r.Use(mw.BodyLimit(10 * 1024 * 1024)) // 10 MB global limit
-	r.Use(cors.Handler(mw.CORSOptions(nil)))
+	r.Use(cors.Handler(mw.CORSOptions(cfg.Server.CORSOrigins)))
 	r.Use(chimiddleware.Compress(5))
 
 	// System routes
@@ -239,6 +248,11 @@ func main() {
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-quit
 		log.Info().Str("signal", sig.String()).Msg("shutting down server")
+
+		// Stop background goroutines
+		bgCancel()
+		rateLimiter.Stop()
+		authRateLimiter.Stop()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

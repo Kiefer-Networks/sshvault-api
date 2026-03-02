@@ -119,6 +119,9 @@ func (r *pgVaultRepo) GetHistory(ctx context.Context, vaultID uuid.UUID, limit i
 		}
 		entries = append(entries, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating rows: %w", err)
+	}
 	return entries, nil
 }
 

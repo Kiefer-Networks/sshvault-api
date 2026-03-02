@@ -1,10 +1,23 @@
 package middleware
 
 import (
+	"strings"
+
 	"github.com/go-chi/cors"
 )
 
-func CORSOptions(allowedOrigins []string) cors.Options {
+// CORSOptions returns CORS configuration. If corsOrigins is non-empty, it is
+// split on commas and used as the allowed origins list. Otherwise the built-in
+// defaults are used.
+func CORSOptions(corsOrigins string) cors.Options {
+	var allowedOrigins []string
+	if corsOrigins != "" {
+		for _, o := range strings.Split(corsOrigins, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
 	if len(allowedOrigins) == 0 {
 		allowedOrigins = []string{"https://sshvault.app", "https://app.sshvault.app"}
 	}

@@ -155,5 +155,8 @@ func (r *pgUserRepo) GetOAuthAccountsByUser(ctx context.Context, userID uuid.UUI
 		}
 		accounts = append(accounts, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating rows: %w", err)
+	}
 	return accounts, nil
 }

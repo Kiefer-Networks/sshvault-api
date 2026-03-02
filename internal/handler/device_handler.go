@@ -10,13 +10,11 @@ import (
 
 type DeviceHandler struct {
 	deviceRepo repository.DeviceRepository
-	tokenRepo  repository.TokenRepository
 }
 
-func NewDeviceHandler(deviceRepo repository.DeviceRepository, tokenRepo repository.TokenRepository) *DeviceHandler {
+func NewDeviceHandler(deviceRepo repository.DeviceRepository) *DeviceHandler {
 	return &DeviceHandler{
 		deviceRepo: deviceRepo,
-		tokenRepo:  tokenRepo,
 	}
 }
 

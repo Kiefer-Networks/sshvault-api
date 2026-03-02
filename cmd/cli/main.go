@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -706,14 +707,43 @@ func createBackup(databaseURL, dir string) (string, error) {
 	filename := fmt.Sprintf("shellvault_%s.sql.gz", timestamp)
 	path := filepath.Join(dir, filename)
 
-	// Use pg_dump piped to gzip
-	cmdStr := fmt.Sprintf(`pg_dump "%s" --no-owner --no-acl | gzip > "%s"`, databaseURL, path)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
-	proc := newShellCmd(cmdStr)
-	output, err := proc.CombinedOutput()
+	// Safe exec: no shell interpolation
+	dump := exec.CommandContext(ctx, "pg_dump", "--no-owner", "--no-acl", databaseURL)
+	gzipCmd := exec.CommandContext(ctx, "gzip")
+
+	// Pipe pg_dump stdout into gzip stdin
+	pipe, err := dump.StdoutPipe()
 	if err != nil {
-		os.Remove(path) // cleanup on failure
-		return "", fmt.Errorf("pg_dump failed: %w\n%s", err, string(output))
+		return "", fmt.Errorf("creating pipe: %w", err)
+	}
+	gzipCmd.Stdin = pipe
+
+	outFile, err := os.Create(path)
+	if err != nil {
+		return "", fmt.Errorf("creating output file: %w", err)
+	}
+	defer outFile.Close()
+
+	gzipCmd.Stdout = outFile
+
+	var dumpStderr, gzipStderr strings.Builder
+	dump.Stderr = &dumpStderr
+	gzipCmd.Stderr = &gzipStderr
+
+	if err := gzipCmd.Start(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("starting gzip: %w", err)
+	}
+	if err := dump.Run(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("pg_dump failed: %w\n%s", err, dumpStderr.String())
+	}
+	if err := gzipCmd.Wait(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("gzip failed: %w\n%s", err, gzipStderr.String())
 	}
 
 	// Verify file was created and has content
@@ -735,13 +765,32 @@ func restoreBackup(databaseURL, file string) error {
 		return fmt.Errorf("backup file is empty: %s", file)
 	}
 
-	// gunzip and pipe to psql
-	cmdStr := fmt.Sprintf(`gunzip -c "%s" | psql "%s"`, file, databaseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
-	proc := newShellCmd(cmdStr)
-	output, err := proc.CombinedOutput()
+	// Safe exec: no shell interpolation
+	gunzip := exec.CommandContext(ctx, "gunzip", "-c", file)
+	psql := exec.CommandContext(ctx, "psql", databaseURL)
+
+	// Pipe gunzip stdout into psql stdin
+	pipe, err := gunzip.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("restore failed: %w\n%s", err, string(output))
+		return fmt.Errorf("creating pipe: %w", err)
+	}
+	psql.Stdin = pipe
+
+	var gunzipStderr, psqlStderr strings.Builder
+	gunzip.Stderr = &gunzipStderr
+	psql.Stderr = &psqlStderr
+
+	if err := psql.Start(); err != nil {
+		return fmt.Errorf("starting psql: %w", err)
+	}
+	if err := gunzip.Run(); err != nil {
+		return fmt.Errorf("gunzip failed: %w\n%s", err, gunzipStderr.String())
+	}
+	if err := psql.Wait(); err != nil {
+		return fmt.Errorf("psql failed: %w\n%s", err, psqlStderr.String())
 	}
 	return nil
 }

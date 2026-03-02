@@ -75,6 +75,31 @@ type AuthResponse struct {
 	ExpiresAt    int64       `json:"expires_at"`
 }
 
+// issueTokenPair generates an access/refresh token pair, stores the refresh token, and returns an AuthResponse.
+func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User, deviceName string) (*AuthResponse, error) {
+	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("generating tokens: %w", err)
+	}
+
+	refreshToken := &model.RefreshToken{
+		UserID:     user.ID,
+		TokenHash:  refreshHash,
+		DeviceName: deviceName,
+		ExpiresAt:  time.Now().Add(s.jwt.RefreshTTL()),
+	}
+	if err := s.tokenRepo.Create(ctx, refreshToken); err != nil {
+		return nil, fmt.Errorf("storing refresh token: %w", err)
+	}
+
+	return &AuthResponse{
+		User:         user,
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		ExpiresAt:    tokenPair.ExpiresAt,
+	}, nil
+}
+
 // ValidateEmail checks if the email address has a valid format (RFC 5322).
 func ValidateEmail(email string) error {
 	if _, err := mail.ParseAddress(email); err != nil {
@@ -130,26 +155,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		}
 	}
 
-	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID)
-	if err != nil {
-		return nil, fmt.Errorf("generating tokens: %w", err)
-	}
-
-	refreshToken := &model.RefreshToken{
-		UserID:    user.ID,
-		TokenHash: refreshHash,
-		ExpiresAt: time.Now().Add(s.jwt.RefreshTTL()),
-	}
-	if err := s.tokenRepo.Create(ctx, refreshToken); err != nil {
-		return nil, fmt.Errorf("storing refresh token: %w", err)
-	}
-
-	return &AuthResponse{
-		User:         user,
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		ExpiresAt:    tokenPair.ExpiresAt,
-	}, nil
+	return s.issueTokenPair(ctx, user, "")
 }
 
 func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {
@@ -203,27 +209,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 	}
 	log.Info().Str("email", req.Email).Str("ip", req.IP).Msg("login successful")
 
-	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID)
-	if err != nil {
-		return nil, fmt.Errorf("generating tokens: %w", err)
-	}
-
-	refreshToken := &model.RefreshToken{
-		UserID:     user.ID,
-		TokenHash:  refreshHash,
-		DeviceName: req.DeviceName,
-		ExpiresAt:  time.Now().Add(s.jwt.RefreshTTL()),
-	}
-	if err := s.tokenRepo.Create(ctx, refreshToken); err != nil {
-		return nil, fmt.Errorf("storing refresh token: %w", err)
-	}
-
-	return &AuthResponse{
-		User:         user,
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		ExpiresAt:    tokenPair.ExpiresAt,
-	}, nil
+	return s.issueTokenPair(ctx, user, req.DeviceName)
 }
 
 func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthResponse, error) {
@@ -248,27 +234,7 @@ func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthRe
 		return nil, fmt.Errorf("user not found")
 	}
 
-	tokenPair, newRefreshHash, err := s.jwt.GenerateTokenPair(user.ID)
-	if err != nil {
-		return nil, fmt.Errorf("generating tokens: %w", err)
-	}
-
-	newRefreshToken := &model.RefreshToken{
-		UserID:     user.ID,
-		TokenHash:  newRefreshHash,
-		DeviceName: stored.DeviceName,
-		ExpiresAt:  time.Now().Add(s.jwt.RefreshTTL()),
-	}
-	if err := s.tokenRepo.Create(ctx, newRefreshToken); err != nil {
-		return nil, fmt.Errorf("storing new refresh token: %w", err)
-	}
-
-	return &AuthResponse{
-		User:         user,
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		ExpiresAt:    tokenPair.ExpiresAt,
-	}, nil
+	return s.issueTokenPair(ctx, user, stored.DeviceName)
 }
 
 func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
@@ -333,27 +299,7 @@ func (s *AuthService) OAuthLogin(ctx context.Context, provider auth.OAuthProvide
 		}
 	}
 
-	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID)
-	if err != nil {
-		return nil, fmt.Errorf("generating tokens: %w", err)
-	}
-
-	refreshToken := &model.RefreshToken{
-		UserID:     user.ID,
-		TokenHash:  refreshHash,
-		DeviceName: deviceName,
-		ExpiresAt:  time.Now().Add(s.jwt.RefreshTTL()),
-	}
-	if err := s.tokenRepo.Create(ctx, refreshToken); err != nil {
-		return nil, fmt.Errorf("storing refresh token: %w", err)
-	}
-
-	return &AuthResponse{
-		User:         user,
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		ExpiresAt:    tokenPair.ExpiresAt,
-	}, nil
+	return s.issueTokenPair(ctx, user, deviceName)
 }
 
 // VerifyEmail validates an email verification token and marks the user as verified.
