@@ -10,6 +10,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - keys:/app/keys
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -60,3 +62,4 @@ services:
 volumes:
   pgdata:
   backups:
+  keys:

@@ -47,10 +47,48 @@ make run
 ```bash
 cp .env.example .env
 # Edit .env — set POSTGRES_PASSWORD, TRUSTED_PROXIES, etc.
-make docker-up
+# IMPORTANT: Set SERVER_ADDR=0.0.0.0:8080 for Docker (binds inside container)
 ```
 
-The server binds to `127.0.0.1:8080` by default. A reverse proxy is **required** for TLS termination — see [Reverse Proxy Setup](#reverse-proxy-setup) below.
+#### Build
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml build
+```
+
+#### Start
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d
+```
+
+#### Stop
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml down
+```
+
+#### Restart (after config changes)
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate
+```
+
+#### Logs
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml logs -f server
+```
+
+#### Update (rebuild + restart)
+
+```bash
+git pull
+docker compose --env-file .env -f docker/docker-compose.yml build
+docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate
+```
+
+> **Note:** `SERVER_ADDR` must be set to `0.0.0.0:8080` inside Docker containers. The port mapping in `docker-compose.yml` (`127.0.0.1:8080:8080`) ensures the server is only reachable via localhost on the host. A reverse proxy is **required** for TLS termination — see [Reverse Proxy Setup](#reverse-proxy-setup) below.
 
 ## Reverse Proxy Setup
 
@@ -199,7 +237,7 @@ Key environment variables:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (keep localhost for reverse proxy setups) |
+| `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
 | `TRUSTED_PROXIES` | No | `127.0.0.1/8,::1/128` | CIDR ranges of trusted reverse proxies |
 | `JWT_PRIVATE_KEY_PATH` | No | `./keys/ed25519.pem` | Path to Ed25519 PEM key (auto-generated if missing) |
 | `STRIPE_SECRET_KEY` | No | — | Enables billing when set |

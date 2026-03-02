@@ -28,7 +28,7 @@ COPY migrations/ ./migrations/
 COPY api/ ./api/
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-RUN mkdir -p /app/backups && chown appuser:appgroup /app/backups
+RUN mkdir -p /app/backups /app/keys && chown appuser:appgroup /app/backups /app/keys
 USER appuser
 
 EXPOSE 8080
