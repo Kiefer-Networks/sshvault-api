@@ -28,7 +28,7 @@ type AppleOAuth struct {
 	cache    *jwk.Cache
 }
 
-func NewAppleOAuth(_, clientID string) *AppleOAuth {
+func NewAppleOAuth(clientID string) *AppleOAuth {
 	ctx := context.Background()
 	c := jwk.NewCache(ctx)
 	_ = c.Register("https://appleid.apple.com/auth/keys", jwk.WithMinRefreshInterval(15*time.Minute))
@@ -79,9 +79,20 @@ func (a *AppleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUse
 
 	sub, _ := claims["sub"].(string)
 	email, _ := claims["email"].(string)
+	emailVerified, _ := claims["email_verified"].(bool)
+	// Apple may also encode email_verified as a string
+	if !emailVerified {
+		if ev, ok := claims["email_verified"].(string); ok && ev == "true" {
+			emailVerified = true
+		}
+	}
 
 	if sub == "" {
 		return nil, fmt.Errorf("missing sub in Apple token")
+	}
+
+	if !emailVerified {
+		return nil, fmt.Errorf("apple email not verified")
 	}
 
 	return &OAuthUserInfo{

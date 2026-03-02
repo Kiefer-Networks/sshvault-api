@@ -12,7 +12,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-XSS-Protection", "0")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), browsing-topics=()")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Embedder-Policy", "require-corp")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")

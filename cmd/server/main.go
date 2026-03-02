@@ -143,7 +143,7 @@ func main() {
 	var appleOAuth auth.OAuthProvider
 	var googleOAuth auth.OAuthProvider
 	if cfg.OAuth.AppleClientID != "" {
-		appleOAuth = auth.NewAppleOAuth(cfg.OAuth.AppleTeamID, cfg.OAuth.AppleClientID)
+		appleOAuth = auth.NewAppleOAuth(cfg.OAuth.AppleClientID)
 	}
 	if cfg.OAuth.GoogleClientID != "" {
 		googleOAuth = auth.NewGoogleOAuth(cfg.OAuth.GoogleClientID)

@@ -24,10 +24,6 @@ func NewBillingService(subRepo repository.SubscriptionRepository, provider billi
 	}
 }
 
-func (s *BillingService) Enabled() bool {
-	return s.enabled
-}
-
 type BillingStatus struct {
 	Active   bool               `json:"active"`
 	Provider string             `json:"provider,omitempty"`

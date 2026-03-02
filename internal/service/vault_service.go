@@ -105,18 +105,12 @@ func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutV
 			}
 		}
 
-		// Save current version to history before overwriting
-		history := &model.VaultHistory{
-			VaultID:  vault.ID,
-			Version:  vault.Version,
-			Blob:     vault.Blob,
-			Checksum: vault.Checksum,
-		}
-		if err := s.vaultRepo.CreateHistory(ctx, history); err != nil {
-			return nil, fmt.Errorf("saving vault history: %w", err)
-		}
+		// Save current blob for history before overwriting
+		prevBlob := vault.Blob
+		prevChecksum := vault.Checksum
+		prevVersion := vault.Version
 
-		// Update vault
+		// Update vault first — if this fails (version conflict), no phantom history entry
 		updated, err := s.vaultRepo.UpdateBlob(ctx, userID, expectedVersion, req.Blob, req.Checksum)
 		if err != nil {
 			return nil, fmt.Errorf("updating vault: %w", err)
@@ -128,6 +122,17 @@ func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutV
 			}
 		}
 		vault = updated
+
+		// Save previous version to history after successful update
+		history := &model.VaultHistory{
+			VaultID:  vault.ID,
+			Version:  prevVersion,
+			Blob:     prevBlob,
+			Checksum: prevChecksum,
+		}
+		if err := s.vaultRepo.CreateHistory(ctx, history); err != nil {
+			return nil, fmt.Errorf("saving vault history: %w", err)
+		}
 
 		// Prune old history (non-fatal)
 		if err := s.vaultRepo.PruneHistory(ctx, vault.ID, s.historyLimit); err != nil {

@@ -124,6 +124,9 @@ func userListCmd() *cobra.Command {
 					createdAt.Format("2006-01-02 15:04"), status)
 				count++
 			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating rows: %w", err)
+			}
 			fmt.Printf("\nTotal: %d users\n", count)
 			return nil
 		},
@@ -167,6 +170,9 @@ func userInfoCmd() *cobra.Command {
 					}
 					fmt.Printf("  - %s: %s (%s)\n", provider, providerID, oaEmail)
 					hasOAuth = true
+				}
+				if err := oauthRows.Err(); err != nil {
+					return fmt.Errorf("iterating oauth rows: %w", err)
 				}
 				if !hasOAuth {
 					fmt.Println("  (none)")
@@ -230,6 +236,9 @@ func userInfoCmd() *cobra.Command {
 					}
 					fmt.Printf("  - %s (%s) — last sync: %s\n", name, platform, syncStr)
 					hasDevices = true
+				}
+				if err := deviceRows.Err(); err != nil {
+					return fmt.Errorf("iterating device rows: %w", err)
 				}
 				if !hasDevices {
 					fmt.Println("  (none)")
@@ -423,6 +432,9 @@ func billingInfoCmd() *cobra.Command {
 				fmt.Printf("  Created:      %s\n", createdAt.Format(time.RFC3339))
 				fmt.Println()
 				hasSubs = true
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating rows: %w", err)
 			}
 
 			if !hasSubs {
@@ -858,8 +870,9 @@ func isUUID(s string) bool {
 }
 
 func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max-3] + "..."
+	runes := []rune(s)
+	if len(runes) > max {
+		return string(runes[:max-3]) + "..."
 	}
 	return s
 }

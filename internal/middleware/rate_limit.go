@@ -79,9 +79,8 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 
 		limiter := rl.getVisitor(key)
 		if !limiter.Allow() {
-			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "60")
-			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+			respondJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 

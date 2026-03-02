@@ -26,7 +26,6 @@ type TokenPair struct {
 
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID string `json:"uid"`
 }
 
 func NewJWTManager(privateKey ed25519.PrivateKey, accessTTL, refreshTTL time.Duration) *JWTManager {
@@ -49,7 +48,6 @@ func (m *JWTManager) GenerateTokenPair(userID uuid.UUID) (*TokenPair, string, er
 			ExpiresAt: jwt.NewNumericDate(accessExp),
 			Issuer:    "shellvault",
 		},
-		UserID: userID.String(),
 	}
 
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodEdDSA, accessClaims)

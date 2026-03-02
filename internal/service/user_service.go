@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/mail"
 
 	"github.com/google/uuid"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
@@ -52,6 +53,9 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 	}
 
 	if req.Email != "" && req.Email != user.Email {
+		if _, err := mail.ParseAddress(req.Email); err != nil {
+			return nil, fmt.Errorf("invalid email format")
+		}
 		existing, err := s.userRepo.GetByEmail(ctx, req.Email)
 		if err != nil {
 			return nil, fmt.Errorf("checking email: %w", err)

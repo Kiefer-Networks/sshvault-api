@@ -23,25 +23,25 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		if header == "" {
-			http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+			respondJSONError(w, http.StatusUnauthorized, "missing authorization header")
 			return
 		}
 
 		parts := strings.SplitN(header, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-			http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
+			respondJSONError(w, http.StatusUnauthorized, "invalid authorization format")
 			return
 		}
 
 		claims, err := m.jwt.ValidateAccessToken(parts[1])
 		if err != nil {
-			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			respondJSONError(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
 
-		userID, err := uuid.Parse(claims.UserID)
+		userID, err := uuid.Parse(claims.Subject)
 		if err != nil {
-			http.Error(w, `{"error":"invalid token claims"}`, http.StatusUnauthorized)
+			respondJSONError(w, http.StatusUnauthorized, "invalid token claims")
 			return
 		}
 
