@@ -262,7 +262,11 @@ func main() {
 			r.Delete("/user", userHandler.DeleteAccount)
 			r.Put("/user/password", userHandler.ChangePassword)
 
+			// Auth (protected)
+			r.Post("/auth/logout-all", authHandler.LogoutAll)
+
 			// Devices
+			r.Post("/devices", deviceHandler.RegisterDevice)
 			r.Get("/devices", deviceHandler.ListDevices)
 			r.Delete("/devices/{id}", deviceHandler.DeleteDevice)
 

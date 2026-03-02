@@ -217,3 +217,18 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "password reset successful"})
 }
+
+func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.authService.LogoutAll(r.Context(), userID); err != nil {
+		log.Error().Err(err).Msg("logout-all failed")
+		respondError(w, http.StatusInternalServerError, "failed to revoke sessions")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "all sessions revoked"})
+}

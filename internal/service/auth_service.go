@@ -406,3 +406,8 @@ func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword s
 	log.Info().Str("user_id", user.ID.String()).Msg("password reset completed")
 	return nil
 }
+
+// LogoutAll revokes all refresh tokens for the given user.
+func (s *AuthService) LogoutAll(ctx context.Context, userID uuid.UUID) error {
+	return s.tokenRepo.RevokeAllForUser(ctx, userID)
+}
