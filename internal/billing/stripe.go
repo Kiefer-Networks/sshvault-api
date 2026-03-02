@@ -62,7 +62,7 @@ func (p *StripeProvider) CreateCheckoutSession(ctx context.Context, userID, emai
 				Quantity: stripe.Int64(1),
 			},
 		},
-		BillingAddressCollection: stripe.String("required"),
+		BillingAddressCollection: stripe.String("auto"),
 		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
 			Enabled: stripe.Bool(true),
 		},
