@@ -127,7 +127,7 @@ func (g *GoogleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUs
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Google token verification failed: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("google token verification failed: status %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -142,7 +142,7 @@ func (g *GoogleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUs
 	}
 
 	if result.Aud != g.clientID {
-		return nil, fmt.Errorf("Google token audience mismatch: got %s, want %s", result.Aud, g.clientID)
+		return nil, fmt.Errorf("google token audience mismatch: got %s, want %s", result.Aud, g.clientID)
 	}
 
 	if result.Sub == "" {
