@@ -3,6 +3,8 @@ package billing
 import (
 	"context"
 	"fmt"
+
+	"github.com/rs/zerolog/log"
 )
 
 // GoogleProvider handles Google Play Billing verification.
@@ -22,10 +24,11 @@ func (p *GoogleProvider) CreatePortalSession(_ context.Context, _ string) (strin
 	return "", fmt.Errorf("google subscriptions are managed via Google Play")
 }
 
-func (p *GoogleProvider) HandleWebhook(ctx context.Context, payload, signature string) error {
+func (p *GoogleProvider) HandleWebhook(_ context.Context, payload, signature string) error {
 	// TODO: Implement Google Play Developer Notifications
 	// 1. Verify notification
 	// 2. Query Google Play Developer API for subscription status
 	// 3. Update subscription status in DB
-	return fmt.Errorf("google webhook handling not implemented")
+	log.Info().Msg("google webhook received but handler not yet implemented")
+	return nil
 }

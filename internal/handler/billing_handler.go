@@ -82,8 +82,6 @@ func (h *BillingHandler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 	signature := r.Header.Get("Stripe-Signature")
 	if err := h.billingService.HandleWebhook(r.Context(), "stripe", string(body), signature); err != nil {
 		log.Warn().Err(err).Msg("stripe webhook processing failed")
-		respondError(w, http.StatusBadRequest, "webhook processing failed")
-		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -98,8 +96,6 @@ func (h *BillingHandler) AppleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.billingService.HandleWebhook(r.Context(), "apple", string(body), ""); err != nil {
 		log.Warn().Err(err).Msg("apple webhook processing failed")
-		respondError(w, http.StatusBadRequest, "webhook processing failed")
-		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -114,8 +110,6 @@ func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.billingService.HandleWebhook(r.Context(), "google", string(body), ""); err != nil {
 		log.Warn().Err(err).Msg("google webhook processing failed")
-		respondError(w, http.StatusBadRequest, "webhook processing failed")
-		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})

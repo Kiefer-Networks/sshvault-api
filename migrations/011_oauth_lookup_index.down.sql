@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_oauth_accounts_provider_provider_id;

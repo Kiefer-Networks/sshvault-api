@@ -356,7 +356,9 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 		return nil // Don't reveal if user exists
 	}
 
-	_ = s.verifyRepo.RevokeAllForUser(ctx, user.ID, repository.TokenKindPasswordReset)
+	if err := s.verifyRepo.RevokeAllForUser(ctx, user.ID, repository.TokenKindPasswordReset); err != nil {
+		log.Warn().Err(err).Str("user_id", user.ID.String()).Msg("failed to revoke existing password reset tokens")
+	}
 
 	rawToken := uuid.New().String()
 	hash := auth.HashToken(rawToken)

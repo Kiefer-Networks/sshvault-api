@@ -3,6 +3,8 @@ package billing
 import (
 	"context"
 	"fmt"
+
+	"github.com/rs/zerolog/log"
 )
 
 // AppleProvider handles App Store Server Notifications v2.
@@ -22,10 +24,11 @@ func (p *AppleProvider) CreatePortalSession(_ context.Context, _ string) (string
 	return "", fmt.Errorf("apple subscriptions are managed via the App Store")
 }
 
-func (p *AppleProvider) HandleWebhook(ctx context.Context, payload, signature string) error {
+func (p *AppleProvider) HandleWebhook(_ context.Context, payload, signature string) error {
 	// TODO: Implement App Store Server Notifications v2
 	// 1. Verify JWS signature
 	// 2. Decode signedPayload
 	// 3. Update subscription status in DB
-	return fmt.Errorf("apple webhook handling not implemented")
+	log.Info().Msg("apple webhook received but handler not yet implemented")
+	return nil
 }

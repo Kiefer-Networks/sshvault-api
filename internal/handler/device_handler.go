@@ -35,7 +35,8 @@ func (h *DeviceHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Name == "" {
-		req.Name = "Unknown Device"
+		respondError(w, http.StatusBadRequest, "name is required")
+		return
 	}
 	if req.Platform == "" {
 		req.Platform = "unknown"
@@ -104,5 +105,5 @@ func (h *DeviceHandler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{"status": "device removed"})
+	w.WriteHeader(http.StatusNoContent)
 }
