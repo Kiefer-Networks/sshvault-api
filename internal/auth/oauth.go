@@ -59,7 +59,7 @@ func (a *AppleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUse
 
 		key, found := set.LookupKeyID(kid)
 		if !found {
-			return nil, fmt.Errorf("Apple key %s not found in JWKS", kid)
+			return nil, fmt.Errorf("apple key %s not found in JWKS", kid)
 		}
 
 		var rawKey interface{}
@@ -124,7 +124,7 @@ func (g *GoogleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUs
 	if err != nil {
 		return nil, fmt.Errorf("verifying Google token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Google token verification failed: status %d", resp.StatusCode)

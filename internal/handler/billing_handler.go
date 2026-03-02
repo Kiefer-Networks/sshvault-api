@@ -123,6 +123,6 @@ func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
 
 // readWebhookBody reads and limits a webhook request body to 1 MB.
 func readWebhookBody(r *http.Request) ([]byte, error) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	return io.ReadAll(io.LimitReader(r.Body, 1<<20))
 }

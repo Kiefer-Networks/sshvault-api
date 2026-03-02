@@ -9,5 +9,5 @@ import (
 func respondJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	fmt.Fprintf(w, `{"error":%q}`, msg)
+	_, _ = fmt.Fprintf(w, `{"error":%q}`, msg)
 }

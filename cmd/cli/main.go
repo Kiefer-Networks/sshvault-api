@@ -737,7 +737,7 @@ func createBackup(databaseURL, dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("creating output file: %w", err)
 	}
-	defer outFile.Close()
+	defer func() { _ = outFile.Close() }()
 
 	gzipCmd.Stdout = outFile
 
@@ -746,15 +746,15 @@ func createBackup(databaseURL, dir string) (string, error) {
 	gzipCmd.Stderr = &gzipStderr
 
 	if err := gzipCmd.Start(); err != nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", fmt.Errorf("starting gzip: %w", err)
 	}
 	if err := dump.Run(); err != nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", fmt.Errorf("pg_dump failed: %w\n%s", err, dumpStderr.String())
 	}
 	if err := gzipCmd.Wait(); err != nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", fmt.Errorf("gzip failed: %w\n%s", err, gzipStderr.String())
 	}
 
@@ -893,6 +893,6 @@ func formatBytes(b int) string {
 func confirm() bool {
 	fmt.Print("Type 'yes' to confirm: ")
 	var input string
-	fmt.Scanln(&input)
+	_ = fmt.Scanln(&input)
 	return strings.TrimSpace(strings.ToLower(input)) == "yes"
 }
