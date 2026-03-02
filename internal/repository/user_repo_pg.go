@@ -104,7 +104,7 @@ func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int
 	if err != nil {
 		return 0, fmt.Errorf("beginning purge transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Delete all related data for soft-deleted users older than the cutoff.
 	// Order matters: child tables first, then the user.

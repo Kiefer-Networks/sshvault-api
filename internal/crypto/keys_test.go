@@ -81,7 +81,9 @@ func TestLoadKeyNotFound(t *testing.T) {
 func TestLoadKeyInvalidPEM(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.key")
-	os.WriteFile(path, []byte("not a pem file"), 0600)
+	if err := os.WriteFile(path, []byte("not a pem file"), 0600); err != nil {
+		t.Fatalf("writing test file: %v", err)
+	}
 
 	_, err := LoadEd25519PrivateKey(path)
 	if err == nil {
@@ -93,8 +95,13 @@ func TestSignAndVerifyWithSavedKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sign-test.key")
 
-	key, _ := GenerateEd25519Key()
-	SaveEd25519PrivateKey(path, key)
+	key, err := GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key: %v", err)
+	}
+	if err := SaveEd25519PrivateKey(path, key); err != nil {
+		t.Fatalf("SaveEd25519PrivateKey: %v", err)
+	}
 
 	loaded, _ := LoadEd25519PrivateKey(path)
 
