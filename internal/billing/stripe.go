@@ -63,6 +63,10 @@ func (p *StripeProvider) CreateCheckoutSession(ctx context.Context, userID, emai
 			},
 		},
 		BillingAddressCollection: stripe.String("auto"),
+		CustomerUpdate: &stripe.CheckoutSessionCustomerUpdateParams{
+			Name:    stripe.String("auto"),
+			Address: stripe.String("auto"),
+		},
 		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
 			Enabled: stripe.Bool(true),
 		},
