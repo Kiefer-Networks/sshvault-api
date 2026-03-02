@@ -290,4 +290,4 @@ For self-hosted instances:
 
 ## License
 
-Proprietary — Kiefer Networks. All rights reserved.
+This project is licensed under the [MIT License](LICENSE).
