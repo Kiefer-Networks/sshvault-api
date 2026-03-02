@@ -893,6 +893,6 @@ func formatBytes(b int) string {
 func confirm() bool {
 	fmt.Print("Type 'yes' to confirm: ")
 	var input string
-	_ = fmt.Scanln(&input)
+	_, _ = fmt.Scanln(&input)
 	return strings.TrimSpace(strings.ToLower(input)) == "yes"
 }
