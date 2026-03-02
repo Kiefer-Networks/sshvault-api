@@ -123,6 +123,7 @@ func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
 
 func (h *BillingHandler) SuccessPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!DOCTYPE html>
 <html lang="en">
@@ -153,6 +154,7 @@ func (h *BillingHandler) SuccessPage(w http.ResponseWriter, r *http.Request) {
 
 func (h *BillingHandler) CancelPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!DOCTYPE html>
 <html lang="en">

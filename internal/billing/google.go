@@ -27,5 +27,5 @@ func (p *GoogleProvider) HandleWebhook(ctx context.Context, payload, signature s
 	// 1. Verify notification
 	// 2. Query Google Play Developer API for subscription status
 	// 3. Update subscription status in DB
-	return nil
+	return fmt.Errorf("google webhook handling not implemented")
 }

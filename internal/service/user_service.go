@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
@@ -14,12 +15,14 @@ import (
 type UserService struct {
 	userRepo  repository.UserRepository
 	tokenRepo repository.TokenRepository
+	tx        *repository.Transactor
 }
 
-func NewUserService(userRepo repository.UserRepository, tokenRepo repository.TokenRepository) *UserService {
+func NewUserService(userRepo repository.UserRepository, tokenRepo repository.TokenRepository, tx *repository.Transactor) *UserService {
 	return &UserService{
 		userRepo:  userRepo,
 		tokenRepo: tokenRepo,
+		tx:        tx,
 	}
 }
 
@@ -50,6 +53,10 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 	}
 	if user == nil {
 		return nil, fmt.Errorf("user not found")
+	}
+
+	if req.Email != "" {
+		req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	}
 
 	if req.Email != "" && req.Email != user.Email {
@@ -94,29 +101,28 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 		return fmt.Errorf("hashing password: %w", err)
 	}
 
-	user.Password = hash
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return fmt.Errorf("updating password: %w", err)
-	}
-
-	// Revoke all refresh tokens after password change
-	if err := s.tokenRepo.RevokeAllForUser(ctx, userID); err != nil {
-		return fmt.Errorf("revoking tokens: %w", err)
-	}
-
-	return nil
+	// Update password and revoke all sessions atomically.
+	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		user.Password = hash
+		if err := s.userRepo.Update(txCtx, user); err != nil {
+			return fmt.Errorf("updating password: %w", err)
+		}
+		if err := s.tokenRepo.RevokeAllForUser(txCtx, userID); err != nil {
+			return fmt.Errorf("revoking tokens: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *UserService) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
-	// Soft delete — data purge after 30 days handled by a background job
-	if err := s.userRepo.SoftDelete(ctx, userID); err != nil {
-		return fmt.Errorf("deleting account: %w", err)
-	}
-
-	// Revoke all tokens
-	if err := s.tokenRepo.RevokeAllForUser(ctx, userID); err != nil {
-		return fmt.Errorf("revoking tokens: %w", err)
-	}
-
-	return nil
+	// Soft delete and revoke all sessions atomically.
+	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := s.userRepo.SoftDelete(txCtx, userID); err != nil {
+			return fmt.Errorf("deleting account: %w", err)
+		}
+		if err := s.tokenRepo.RevokeAllForUser(txCtx, userID); err != nil {
+			return fmt.Errorf("revoking tokens: %w", err)
+		}
+		return nil
+	})
 }

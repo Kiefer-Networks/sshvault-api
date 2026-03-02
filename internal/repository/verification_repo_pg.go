@@ -59,7 +59,7 @@ func (r *pgVerificationRepo) GetByHash(ctx context.Context, tokenHash, kind stri
 
 func (r *pgVerificationRepo) MarkUsed(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE verification_tokens SET used = TRUE WHERE id = $1`
-	_, err := r.pool.Exec(ctx, query, id)
+	_, err := conn(ctx, r.pool).Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("marking token as used: %w", err)
 	}

@@ -27,5 +27,5 @@ func (p *AppleProvider) HandleWebhook(ctx context.Context, payload, signature st
 	// 1. Verify JWS signature
 	// 2. Decode signedPayload
 	// 3. Update subscription status in DB
-	return nil
+	return fmt.Errorf("apple webhook handling not implemented")
 }

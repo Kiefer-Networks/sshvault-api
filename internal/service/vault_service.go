@@ -15,13 +15,15 @@ import (
 
 type VaultService struct {
 	vaultRepo    repository.VaultRepository
+	tx           *repository.Transactor
 	maxSizeBytes int
 	historyLimit int
 }
 
-func NewVaultService(vaultRepo repository.VaultRepository, maxSizeMB, historyLimit int) *VaultService {
+func NewVaultService(vaultRepo repository.VaultRepository, tx *repository.Transactor, maxSizeMB, historyLimit int) *VaultService {
 	return &VaultService{
 		vaultRepo:    vaultRepo,
+		tx:           tx,
 		maxSizeBytes: maxSizeMB * 1024 * 1024,
 		historyLimit: historyLimit,
 	}
@@ -110,31 +112,37 @@ func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutV
 		prevChecksum := vault.Checksum
 		prevVersion := vault.Version
 
-		// Update vault first — if this fails (version conflict), no phantom history entry
-		updated, err := s.vaultRepo.UpdateBlob(ctx, userID, expectedVersion, req.Blob, req.Checksum)
-		if err != nil {
-			return nil, fmt.Errorf("updating vault: %w", err)
-		}
-		if updated == nil {
-			return nil, &ConflictError{
-				CurrentVersion: vault.Version,
-				Message:        "concurrent modification detected",
+		// Update vault and save history atomically
+		var updated *model.Vault
+		if err := s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+			var txErr error
+			updated, txErr = s.vaultRepo.UpdateBlob(txCtx, userID, expectedVersion, req.Blob, req.Checksum)
+			if txErr != nil {
+				return fmt.Errorf("updating vault: %w", txErr)
 			}
+			if updated == nil {
+				return &ConflictError{
+					CurrentVersion: vault.Version,
+					Message:        "concurrent modification detected",
+				}
+			}
+
+			history := &model.VaultHistory{
+				VaultID:  updated.ID,
+				Version:  prevVersion,
+				Blob:     prevBlob,
+				Checksum: prevChecksum,
+			}
+			if txErr = s.vaultRepo.CreateHistory(txCtx, history); txErr != nil {
+				return fmt.Errorf("saving vault history: %w", txErr)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
 		vault = updated
 
-		// Save previous version to history after successful update
-		history := &model.VaultHistory{
-			VaultID:  vault.ID,
-			Version:  prevVersion,
-			Blob:     prevBlob,
-			Checksum: prevChecksum,
-		}
-		if err := s.vaultRepo.CreateHistory(ctx, history); err != nil {
-			return nil, fmt.Errorf("saving vault history: %w", err)
-		}
-
-		// Prune old history (non-fatal)
+		// Prune old history (non-fatal, outside transaction)
 		if err := s.vaultRepo.PruneHistory(ctx, vault.ID, s.historyLimit); err != nil {
 			log.Warn().Err(err).Str("vault_id", vault.ID.String()).Msg("failed to prune vault history")
 		}

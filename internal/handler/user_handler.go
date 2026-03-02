@@ -41,6 +41,11 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.Email) > 254 {
+		respondError(w, http.StatusBadRequest, "email must be at most 254 characters")
+		return
+	}
+
 	user, err := h.userService.UpdateProfile(r.Context(), userID, &req)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
@@ -76,6 +81,11 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	var req service.ChangePasswordRequest
 	if err := decodeJSON(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.CurrentPassword == "" {
+		respondError(w, http.StatusBadRequest, "current_password is required")
 		return
 	}
 

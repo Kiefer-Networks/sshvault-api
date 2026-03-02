@@ -68,7 +68,7 @@ func (r *pgTokenRepo) Revoke(ctx context.Context, id uuid.UUID) error {
 
 func (r *pgTokenRepo) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
 	query := `UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND NOT revoked`
-	_, err := r.pool.Exec(ctx, query, userID)
+	_, err := conn(ctx, r.pool).Exec(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("revoking all tokens for user: %w", err)
 	}

@@ -40,6 +40,14 @@ func (h *DeviceHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	if req.Platform == "" {
 		req.Platform = "unknown"
 	}
+	if len(req.Name) > 255 {
+		respondError(w, http.StatusBadRequest, "name must be at most 255 characters")
+		return
+	}
+	if len(req.Platform) > 50 {
+		respondError(w, http.StatusBadRequest, "platform must be at most 50 characters")
+		return
+	}
 
 	device := &model.Device{
 		UserID:   userID,
@@ -52,7 +60,7 @@ func (h *DeviceHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]interface{}{
+	respondJSON(w, http.StatusCreated, map[string]any{
 		"id":       device.ID,
 		"name":     device.Name,
 		"platform": device.Platform,
@@ -72,11 +80,11 @@ func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if devices == nil {
-		respondJSON(w, http.StatusOK, map[string]interface{}{"devices": []interface{}{}})
+		respondJSON(w, http.StatusOK, map[string]any{"devices": []any{}})
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{"devices": devices})
+	respondJSON(w, http.StatusOK, map[string]any{"devices": devices})
 }
 
 func (h *DeviceHandler) DeleteDevice(w http.ResponseWriter, r *http.Request) {

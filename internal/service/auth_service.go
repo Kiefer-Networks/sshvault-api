@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ type AuthService struct {
 	userRepo      repository.UserRepository
 	tokenRepo     repository.TokenRepository
 	verifyRepo    repository.VerificationRepository
+	tx            *repository.Transactor
 	jwt           *auth.JWTManager
 	mailer        MailSender
 	bruteForce    *middleware.BruteForceGuard
@@ -33,6 +35,7 @@ func NewAuthService(
 	userRepo repository.UserRepository,
 	tokenRepo repository.TokenRepository,
 	verifyRepo repository.VerificationRepository,
+	tx *repository.Transactor,
 	jwt *auth.JWTManager,
 	mailer MailSender,
 	bruteForce *middleware.BruteForceGuard,
@@ -41,6 +44,7 @@ func NewAuthService(
 		userRepo:   userRepo,
 		tokenRepo:  tokenRepo,
 		verifyRepo: verifyRepo,
+		tx:         tx,
 		jwt:        jwt,
 		mailer:     mailer,
 		bruteForce: bruteForce,
@@ -100,6 +104,11 @@ func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User, devi
 	}, nil
 }
 
+// NormalizeEmail lowercases and trims an email address.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // ValidateEmail checks if the email address has a valid format (RFC 5322).
 func ValidateEmail(email string) error {
 	if _, err := mail.ParseAddress(email); err != nil {
@@ -109,6 +118,8 @@ func ValidateEmail(email string) error {
 }
 
 func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+	req.Email = NormalizeEmail(req.Email)
+
 	if err := ValidateEmail(req.Email); err != nil {
 		return nil, err
 	}
@@ -159,6 +170,8 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 }
 
 func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {
+	req.Email = NormalizeEmail(req.Email)
+
 	if err := ValidateEmail(req.Email); err != nil {
 		return nil, err
 	}
@@ -336,6 +349,8 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 
 // ForgotPassword generates a password reset token and sends it via email.
 func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
+	email = NormalizeEmail(email)
+
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil || user == nil {
 		return nil // Don't reveal if user exists
@@ -390,17 +405,21 @@ func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword s
 		return fmt.Errorf("hashing password: %w", err)
 	}
 
-	user.Password = passwordHash
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return fmt.Errorf("updating password: %w", err)
-	}
-
-	if err := s.verifyRepo.MarkUsed(ctx, token.ID); err != nil {
-		log.Warn().Err(err).Msg("failed to mark reset token as used")
-	}
-
-	if err := s.tokenRepo.RevokeAllForUser(ctx, user.ID); err != nil {
-		log.Warn().Err(err).Msg("failed to revoke tokens after password reset")
+	// Update password, mark token used, and revoke all sessions atomically.
+	if err := s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		user.Password = passwordHash
+		if err := s.userRepo.Update(txCtx, user); err != nil {
+			return fmt.Errorf("updating password: %w", err)
+		}
+		if err := s.verifyRepo.MarkUsed(txCtx, token.ID); err != nil {
+			return fmt.Errorf("marking reset token as used: %w", err)
+		}
+		if err := s.tokenRepo.RevokeAllForUser(txCtx, user.ID); err != nil {
+			return fmt.Errorf("revoking tokens: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	log.Info().Str("user_id", user.ID.String()).Msg("password reset completed")

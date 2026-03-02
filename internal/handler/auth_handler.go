@@ -132,6 +132,14 @@ func (h *AuthHandler) OAuth(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "id_token is required")
 		return
 	}
+	if len(req.IDToken) > 10*1024 {
+		respondError(w, http.StatusBadRequest, "id_token exceeds maximum size")
+		return
+	}
+	if len(req.DeviceName) > 255 {
+		respondError(w, http.StatusBadRequest, "device_name must be at most 255 characters")
+		return
+	}
 
 	var oauthProvider auth.OAuthProvider
 	switch provider {

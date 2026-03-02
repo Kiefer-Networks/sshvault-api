@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/smtp"
+
+	"github.com/rs/zerolog/log"
 )
 
 type Mailer interface {
@@ -50,7 +52,6 @@ func NewNoopMailer() *NoopMailer {
 }
 
 func (m *NoopMailer) Send(_ context.Context, to, subject, _ string) error {
-	// In development, just log that we would send an email
-	fmt.Printf("[MAIL-NOOP] Would send to=%s subject=%s\n", to, subject)
+	log.Info().Str("to", to).Str("subject", subject).Msg("noop mailer: would send email")
 	return nil
 }

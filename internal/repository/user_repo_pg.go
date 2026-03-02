@@ -82,7 +82,7 @@ func (r *pgUserRepo) Update(ctx context.Context, user *model.User) error {
 		WHERE id = $5 AND deleted_at IS NULL`
 
 	user.UpdatedAt = time.Now()
-	_, err := r.pool.Exec(ctx, query,
+	_, err := conn(ctx, r.pool).Exec(ctx, query,
 		user.Email, user.Password, user.Verified, user.UpdatedAt, user.ID)
 	if err != nil {
 		return fmt.Errorf("updating user: %w", err)
@@ -92,7 +92,7 @@ func (r *pgUserRepo) Update(ctx context.Context, user *model.User) error {
 
 func (r *pgUserRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`
-	_, err := r.pool.Exec(ctx, query, time.Now(), id)
+	_, err := conn(ctx, r.pool).Exec(ctx, query, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("soft deleting user: %w", err)
 	}
@@ -100,30 +100,43 @@ func (r *pgUserRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning purge transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	// Delete all related data for soft-deleted users older than the cutoff.
 	// Order matters: child tables first, then the user.
 	queries := []string{
 		`DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM verification_tokens WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		`DELETE FROM vault_history WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		// vault_history has no user_id — join through vaults
+		`DELETE FROM vault_history WHERE vault_id IN (SELECT v.id FROM vaults v JOIN users u ON v.user_id = u.id WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1)`,
 		`DELETE FROM vaults WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM devices WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM oauth_accounts WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		`DELETE FROM login_attempts WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
+		// login_attempts has no user_id — match by email
+		`DELETE FROM login_attempts WHERE email IN (SELECT email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 	}
 
 	for _, q := range queries {
-		if _, err := r.pool.Exec(ctx, q, olderThan); err != nil {
+		if _, err := tx.Exec(ctx, q, olderThan); err != nil {
 			return 0, fmt.Errorf("purging related data: %w", err)
 		}
 	}
 
 	// Finally delete the user rows
-	result, err := r.pool.Exec(ctx, `DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1`, olderThan)
+	result, err := tx.Exec(ctx, `DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1`, olderThan)
 	if err != nil {
 		return 0, fmt.Errorf("purging deleted users: %w", err)
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing purge transaction: %w", err)
+	}
+
 	return result.RowsAffected(), nil
 }
 

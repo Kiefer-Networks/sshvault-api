@@ -51,7 +51,7 @@ func (a *AppleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUse
 		jwt.WithAudience(a.clientID),
 	)
 
-	token, err := parser.Parse(idToken, func(t *jwt.Token) (interface{}, error) {
+	token, err := parser.Parse(idToken, func(t *jwt.Token) (any, error) {
 		kid, ok := t.Header["kid"].(string)
 		if !ok {
 			return nil, fmt.Errorf("missing kid in token header")
@@ -62,7 +62,7 @@ func (a *AppleOAuth) VerifyToken(ctx context.Context, idToken string) (*OAuthUse
 			return nil, fmt.Errorf("apple key %s not found in JWKS", kid)
 		}
 
-		var rawKey interface{}
+		var rawKey any
 		if err := key.Raw(&rawKey); err != nil {
 			return nil, fmt.Errorf("extracting raw key: %w", err)
 		}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -87,6 +88,7 @@ func main() {
 	vaultRepo := repository.NewVaultRepository(pool)
 	deviceRepo := repository.NewDeviceRepository(pool)
 	subRepo := repository.NewSubscriptionRepository(pool)
+	transactor := repository.NewTransactor(pool)
 
 	// Mailer
 	var mailer mail.Mailer
@@ -120,8 +122,12 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
+	var bgWg sync.WaitGroup
+
 	// Background cleanup of old login attempts (every hour)
+	bgWg.Add(1)
 	go func() {
+		defer bgWg.Done()
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -135,7 +141,9 @@ func main() {
 	}()
 
 	// Background cleanup of expired tokens (every 6 hours)
+	bgWg.Add(1)
 	go func() {
+		defer bgWg.Done()
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -161,7 +169,9 @@ func main() {
 	}()
 
 	// Background purge of soft-deleted users after 30 days (every 24 hours)
+	bgWg.Add(1)
 	go func() {
+		defer bgWg.Done()
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -181,9 +191,9 @@ func main() {
 	}()
 
 	// Services
-	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, jwtManager, mailService, bruteForceGuard)
-	vaultService := service.NewVaultService(vaultRepo, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
-	userService := service.NewUserService(userRepo, tokenRepo)
+	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, transactor, jwtManager, mailService, bruteForceGuard)
+	vaultService := service.NewVaultService(vaultRepo, transactor, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
+	userService := service.NewUserService(userRepo, tokenRepo, transactor)
 	billingService := service.NewBillingService(subRepo, billingProvider, billingEnabled)
 
 	// OAuth providers
@@ -215,6 +225,7 @@ func main() {
 	// Global middleware
 	r.Use(mw.TrustedRealIP(cfg.Server.TrustedProxies))
 	r.Use(mw.RequestID)
+	r.Use(mw.RequestLogger)
 	r.Use(mw.SecurityHeaders)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(rateLimiter.Limit)
@@ -304,8 +315,9 @@ func main() {
 		sig := <-quit
 		log.Info().Str("signal", sig.String()).Msg("shutting down server")
 
-		// Stop background goroutines
+		// Stop background goroutines and wait for them to finish
 		bgCancel()
+		bgWg.Wait()
 		rateLimiter.Stop()
 		authRateLimiter.Stop()
 

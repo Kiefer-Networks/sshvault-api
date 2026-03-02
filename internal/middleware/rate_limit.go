@@ -10,7 +10,7 @@ import (
 
 type RateLimiter struct {
 	visitors map[string]*visitor
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	rps      rate.Limit
 	burst    int
 	stop     chan struct{}

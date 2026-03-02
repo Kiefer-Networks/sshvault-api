@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 func LoadEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
@@ -51,8 +52,10 @@ func SaveEd25519PrivateKey(path string, key ed25519.PrivateKey) error {
 		Bytes: der,
 	}
 
-	if err := os.MkdirAll("keys", 0700); err != nil {
-		return fmt.Errorf("creating keys directory: %w", err)
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return fmt.Errorf("creating keys directory: %w", err)
+		}
 	}
 
 	return os.WriteFile(path, pem.EncodeToMemory(block), 0600)

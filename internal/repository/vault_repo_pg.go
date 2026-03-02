@@ -68,7 +68,7 @@ func (r *pgVaultRepo) UpdateBlob(ctx context.Context, userID uuid.UUID, expected
 
 	now := time.Now()
 	var vault model.Vault
-	err := r.pool.QueryRow(ctx, query, blob, checksum, now, userID, expectedVersion).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, blob, checksum, now, userID, expectedVersion).Scan(
 		&vault.ID, &vault.UserID, &vault.Version, &vault.Blob,
 		&vault.Checksum, &vault.UpdatedAt)
 	if err != nil {
@@ -90,7 +90,7 @@ func (r *pgVaultRepo) CreateHistory(ctx context.Context, entry *model.VaultHisto
 	}
 	entry.CreatedAt = time.Now()
 
-	_, err := r.pool.Exec(ctx, query,
+	_, err := conn(ctx, r.pool).Exec(ctx, query,
 		entry.ID, entry.VaultID, entry.Version, entry.Blob,
 		entry.Checksum, entry.CreatedAt)
 	if err != nil {

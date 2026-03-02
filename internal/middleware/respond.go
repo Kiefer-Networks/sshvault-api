@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
 )
 
@@ -9,5 +9,5 @@ import (
 func respondJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_, _ = fmt.Fprintf(w, `{"error":%q}`, msg)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

@@ -97,7 +97,7 @@ func (h *VaultHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{"history": entries})
+	respondJSON(w, http.StatusOK, map[string]any{"history": entries})
 }
 
 func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request) {

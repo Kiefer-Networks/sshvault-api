@@ -12,7 +12,7 @@ import (
 // MinPasswordLength is the minimum number of characters required for user passwords.
 const MinPasswordLength = 8
 
-func respondJSON(w http.ResponseWriter, status int, data interface{}) {
+func respondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if data != nil {
@@ -26,7 +26,7 @@ func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{"error": message})
 }
 
-func decodeJSON(r *http.Request, v interface{}) error {
+func decodeJSON(r *http.Request, v any) error {
 	defer func() { _ = r.Body.Close() }()
 	decoder := json.NewDecoder(r.Body)
 	return decoder.Decode(v)
