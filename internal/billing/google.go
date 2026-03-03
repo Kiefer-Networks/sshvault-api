@@ -32,3 +32,7 @@ func (p *GoogleProvider) HandleWebhook(_ context.Context, payload, signature str
 	log.Info().Msg("google webhook received but handler not yet implemented")
 	return nil
 }
+
+func (p *GoogleProvider) CancelSubscription(_ context.Context, _ string) error {
+	return fmt.Errorf("google subscriptions must be cancelled via Google Play")
+}

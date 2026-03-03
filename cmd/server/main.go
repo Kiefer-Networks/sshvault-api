@@ -258,7 +258,7 @@ func main() {
 	// Services
 	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, transactor, jwtManager, mailService, bruteForceGuard)
 	vaultService := service.NewVaultService(vaultRepo, transactor, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
-	userService := service.NewUserService(userRepo, tokenRepo, transactor)
+	userService := service.NewUserService(userRepo, tokenRepo, subRepo, billingProvider, transactor)
 	billingService := service.NewBillingService(subRepo, billingProvider, billingEnabled)
 
 	// Handlers

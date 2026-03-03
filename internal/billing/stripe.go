@@ -15,6 +15,7 @@ import (
 	portalsession "github.com/stripe/stripe-go/v81/billingportal/session"
 	"github.com/stripe/stripe-go/v81/checkout/session"
 	stripecustomer "github.com/stripe/stripe-go/v81/customer"
+	stripesub "github.com/stripe/stripe-go/v81/subscription"
 	"github.com/stripe/stripe-go/v81/webhook"
 )
 
@@ -106,6 +107,11 @@ func (p *StripeProvider) CreatePortalSession(ctx context.Context, subscriptionID
 	}
 
 	return s.URL, nil
+}
+
+func (p *StripeProvider) CancelSubscription(ctx context.Context, subscriptionID string) error {
+	_, err := stripesub.Cancel(subscriptionID, nil)
+	return err
 }
 
 func (p *StripeProvider) HandleWebhook(ctx context.Context, payload, signature string) error {

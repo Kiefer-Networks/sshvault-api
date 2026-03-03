@@ -74,6 +74,10 @@ func (m *mockBillingProvider) HandleWebhook(_ context.Context, _, _ string) erro
 	return m.webhookErr
 }
 
+func (m *mockBillingProvider) CancelSubscription(_ context.Context, _ string) error {
+	return nil
+}
+
 // --- Helpers ---
 
 func seedSubscription(repo *mockSubRepo, userID uuid.UUID, status, provider, subID string) *model.Subscription {

@@ -32,3 +32,7 @@ func (p *AppleProvider) HandleWebhook(_ context.Context, payload, signature stri
 	log.Info().Msg("apple webhook received but handler not yet implemented")
 	return nil
 }
+
+func (p *AppleProvider) CancelSubscription(_ context.Context, _ string) error {
+	return fmt.Errorf("apple subscriptions must be cancelled via the App Store")
+}

@@ -22,3 +22,7 @@ func (p *NoopProvider) CreatePortalSession(_ context.Context, _ string) (string,
 func (p *NoopProvider) HandleWebhook(_ context.Context, _, _ string) error {
 	return nil
 }
+
+func (p *NoopProvider) CancelSubscription(_ context.Context, _ string) error {
+	return nil
+}

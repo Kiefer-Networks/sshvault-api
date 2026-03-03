@@ -8,21 +8,33 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
+	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/model"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
+	"github.com/rs/zerolog/log"
 )
 
 type UserService struct {
-	userRepo  repository.UserRepository
-	tokenRepo repository.TokenRepository
-	tx        *repository.Transactor
+	userRepo        repository.UserRepository
+	tokenRepo       repository.TokenRepository
+	subRepo         repository.SubscriptionRepository
+	billingProvider billing.Provider
+	tx              *repository.Transactor
 }
 
-func NewUserService(userRepo repository.UserRepository, tokenRepo repository.TokenRepository, tx *repository.Transactor) *UserService {
+func NewUserService(
+	userRepo repository.UserRepository,
+	tokenRepo repository.TokenRepository,
+	subRepo repository.SubscriptionRepository,
+	billingProvider billing.Provider,
+	tx *repository.Transactor,
+) *UserService {
 	return &UserService{
-		userRepo:  userRepo,
-		tokenRepo: tokenRepo,
-		tx:        tx,
+		userRepo:        userRepo,
+		tokenRepo:       tokenRepo,
+		subRepo:         subRepo,
+		billingProvider: billingProvider,
+		tx:              tx,
 	}
 }
 
@@ -115,6 +127,15 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 }
 
 func (s *UserService) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
+	// Cancel active Stripe subscription if exists (best-effort).
+	if sub, err := s.subRepo.GetByUserID(ctx, userID); err == nil && sub != nil {
+		if sub.Provider == "stripe" && sub.Status == model.SubStatusActive {
+			if err := s.billingProvider.CancelSubscription(ctx, sub.ProviderSubID); err != nil {
+				log.Warn().Err(err).Str("user_id", userID.String()).Msg("failed to cancel Stripe subscription during account deletion")
+			}
+		}
+	}
+
 	// Soft delete and revoke all sessions atomically.
 	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
 		if err := s.userRepo.SoftDelete(txCtx, userID); err != nil {

@@ -107,6 +107,10 @@ func (m *mockBillingProvider) HandleWebhook(_ context.Context, _, _ string) erro
 	return nil
 }
 
+func (m *mockBillingProvider) CancelSubscription(_ context.Context, _ string) error {
+	return nil
+}
+
 // --- helpers ---
 
 func newTestAuditLogger() *audit.Logger {
