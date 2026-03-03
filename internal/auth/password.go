@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	argonMemory      = 64 * 1024 // 64 MB
+	argonMemory      = 256 * 1024 // 256 MiB (matching client v2)
 	argonIterations  = 3
-	argonParallelism = 4
+	argonParallelism = 1 // matching client v2
 	argonSaltLen     = 16
 	argonKeyLen      = 32
 )
