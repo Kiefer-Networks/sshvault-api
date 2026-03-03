@@ -14,11 +14,13 @@ func LoadEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading key file: %w", err)
 	}
+	defer Zero(data)
 
 	block, _ := pem.Decode(data)
 	if block == nil {
 		return nil, fmt.Errorf("no PEM block found in %s", path)
 	}
+	defer Zero(block.Bytes)
 
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
@@ -46,6 +48,7 @@ func SaveEd25519PrivateKey(path string, key ed25519.PrivateKey) error {
 	if err != nil {
 		return fmt.Errorf("marshaling private key: %w", err)
 	}
+	defer Zero(der)
 
 	block := &pem.Block{
 		Type:  "PRIVATE KEY",
