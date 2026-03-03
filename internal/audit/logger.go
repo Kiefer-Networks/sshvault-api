@@ -34,6 +34,22 @@ func NewLogger(repo *Repository, bufferSize int) *Logger {
 	return l
 }
 
+// NewNopLogger creates a Logger that silently discards all entries.
+// Useful for testing handlers that require a non-nil audit logger.
+func NewNopLogger() *Logger {
+	l := &Logger{
+		ch:   make(chan *Entry, 1024),
+		done: make(chan struct{}),
+	}
+	go func() {
+		defer close(l.done)
+		for range l.ch {
+			// discard
+		}
+	}()
+	return l
+}
+
 // run is the background goroutine that processes buffered entries.
 func (l *Logger) run() {
 	defer close(l.done)
