@@ -1,0 +1,2 @@
+-- OAuth support has been intentionally removed from ShellVault.
+-- This down migration is a no-op placeholder.

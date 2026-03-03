@@ -11,7 +11,6 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	JWT      JWTConfig
-	OAuth    OAuthConfig
 	SMTP     SMTPConfig
 	Billing  BillingConfig
 	Vault    VaultConfig
@@ -39,14 +38,6 @@ type JWTConfig struct {
 	PrivateKeyPath string        `envconfig:"JWT_PRIVATE_KEY_PATH" default:"./keys/ed25519.pem"`
 	AccessTTL      time.Duration `envconfig:"JWT_ACCESS_TTL" default:"15m"`
 	RefreshTTL     time.Duration `envconfig:"JWT_REFRESH_TTL" default:"720h"`
-}
-
-type OAuthConfig struct {
-	AppleTeamID    string `envconfig:"OAUTH_APPLE_TEAM_ID"`
-	AppleClientID  string `envconfig:"OAUTH_APPLE_CLIENT_ID"`
-	AppleKeyID     string `envconfig:"OAUTH_APPLE_KEY_ID"`
-	AppleKeyPath   string `envconfig:"OAUTH_APPLE_KEY_PATH"`
-	GoogleClientID string `envconfig:"OAUTH_GOOGLE_CLIENT_ID"`
 }
 
 type SMTPConfig struct {

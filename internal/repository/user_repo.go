@@ -16,9 +16,4 @@ type UserRepository interface {
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 	PurgeDeleted(ctx context.Context, olderThan time.Time) (int64, error)
 	GetPurgableUserIDs(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error)
-
-	// OAuth
-	CreateOAuthAccount(ctx context.Context, account *model.OAuthAccount) error
-	GetOAuthAccount(ctx context.Context, provider, providerID string) (*model.OAuthAccount, error)
-	GetOAuthAccountsByUser(ctx context.Context, userID uuid.UUID) ([]model.OAuthAccount, error)
 }

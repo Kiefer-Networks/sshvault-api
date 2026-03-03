@@ -81,18 +81,6 @@ func (m *userSvcMockUserRepo) GetPurgableUserIDs(_ context.Context, _ time.Time)
 	return nil, nil
 }
 
-func (m *userSvcMockUserRepo) CreateOAuthAccount(_ context.Context, _ *model.OAuthAccount) error {
-	return nil
-}
-
-func (m *userSvcMockUserRepo) GetOAuthAccount(_ context.Context, _, _ string) (*model.OAuthAccount, error) {
-	return nil, nil
-}
-
-func (m *userSvcMockUserRepo) GetOAuthAccountsByUser(_ context.Context, _ uuid.UUID) ([]model.OAuthAccount, error) {
-	return nil, nil
-}
-
 type userSvcMockTokenRepo struct {
 	tokens     map[uuid.UUID]*model.RefreshToken
 	revokeErr  error
@@ -436,15 +424,15 @@ func TestChangePasswordInvalidCurrent(t *testing.T) {
 	}
 }
 
-func TestChangePasswordOAuthUserNoPassword(t *testing.T) {
+func TestChangePasswordEmptyPasswordUser(t *testing.T) {
 	repo := newUserSvcMockUserRepo()
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
-	// OAuth users have an empty password field; changing password should skip
+	// Users with an empty password field; changing password should skip
 	// the current password check. This test verifies the code path up to the
 	// transaction call. Because the Transactor requires a real DB, we expect
 	// a nil-pointer panic. We recover from it to confirm we got past the
 	// password check.
-	user := seedUser(repo, "oauth@example.com", "")
+	user := seedUser(repo, "emptypass@example.com", "")
 
 	func() {
 		defer func() {

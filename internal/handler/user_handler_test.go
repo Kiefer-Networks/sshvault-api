@@ -60,18 +60,6 @@ func (m *mockUserRepo) GetPurgableUserIDs(_ context.Context, _ time.Time) ([]uui
 	return nil, nil
 }
 
-func (m *mockUserRepo) CreateOAuthAccount(_ context.Context, _ *model.OAuthAccount) error {
-	return nil
-}
-
-func (m *mockUserRepo) GetOAuthAccount(_ context.Context, _, _ string) (*model.OAuthAccount, error) {
-	return nil, nil
-}
-
-func (m *mockUserRepo) GetOAuthAccountsByUser(_ context.Context, _ uuid.UUID) ([]model.OAuthAccount, error) {
-	return nil, nil
-}
-
 // --- mock token repository ---
 
 type mockTokenRepo struct{}

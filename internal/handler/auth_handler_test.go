@@ -1,14 +1,11 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/go-chi/chi/v5"
 )
 
 // newAuthHandler creates a minimal AuthHandler with nil services for input-validation tests.
@@ -16,8 +13,6 @@ import (
 func newAuthHandler() *AuthHandler {
 	return &AuthHandler{
 		authService: nil,
-		apple:       nil,
-		google:      nil,
 		audit:       nil,
 	}
 }
@@ -177,79 +172,6 @@ func TestResetPasswordShortNewPassword(t *testing.T) {
 	msg := decodeError(t, rec)
 	if !strings.Contains(msg, "at least 8") {
 		t.Errorf("error = %q, want 'at least 8 characters'", msg)
-	}
-}
-
-func TestOAuthMissingIDToken(t *testing.T) {
-	h := newAuthHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/oauth/google",
-		strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	// Need chi context for URL params
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	h.OAuth(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-	msg := decodeError(t, rec)
-	if msg != "id_token is required" {
-		t.Errorf("error = %q, want %q", msg, "id_token is required")
-	}
-}
-
-func TestOAuthOversizedToken(t *testing.T) {
-	h := newAuthHandler()
-
-	oversized := strings.Repeat("a", 11*1024) // > 10 KB
-	body := `{"id_token":"` + oversized + `"}`
-
-	req := httptest.NewRequest(http.MethodPost, "/oauth/google",
-		strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	h.OAuth(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-	msg := decodeError(t, rec)
-	if !strings.Contains(msg, "exceeds maximum size") {
-		t.Errorf("error = %q, want 'exceeds maximum size'", msg)
-	}
-}
-
-func TestOAuthUnsupportedProvider(t *testing.T) {
-	h := newAuthHandler()
-
-	req := httptest.NewRequest(http.MethodPost, "/oauth/github",
-		strings.NewReader(`{"id_token":"sometoken"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider", "github")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	h.OAuth(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-	msg := decodeError(t, rec)
-	if msg != "unsupported provider" {
-		t.Errorf("error = %q, want %q", msg, "unsupported provider")
 	}
 }
 

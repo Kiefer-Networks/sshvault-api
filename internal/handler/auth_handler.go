@@ -4,26 +4,20 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/kiefernetworks/shellvault-server/internal/audit"
-	"github.com/kiefernetworks/shellvault-server/internal/auth"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
 type AuthHandler struct {
 	authService *service.AuthService
-	apple       auth.OAuthProvider
-	google      auth.OAuthProvider
 	audit       *audit.Logger
 }
 
-func NewAuthHandler(authService *service.AuthService, apple, google auth.OAuthProvider, auditLogger *audit.Logger) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService, auditLogger *audit.Logger) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
-		apple:       apple,
-		google:      google,
 		audit:       auditLogger,
 	}
 }
@@ -140,62 +134,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActLogout).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
-}
-
-func (h *AuthHandler) OAuth(w http.ResponseWriter, r *http.Request) {
-	provider := chi.URLParam(r, "provider")
-
-	var req service.OAuthRequest
-	if err := decodeJSON(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if req.IDToken == "" {
-		respondError(w, http.StatusBadRequest, "id_token is required")
-		return
-	}
-	if len(req.IDToken) > 10*1024 {
-		respondError(w, http.StatusBadRequest, "id_token exceeds maximum size")
-		return
-	}
-	if len(req.DeviceName) > 255 {
-		respondError(w, http.StatusBadRequest, "device_name must be at most 255 characters")
-		return
-	}
-
-	var oauthProvider auth.OAuthProvider
-	switch provider {
-	case "apple":
-		oauthProvider = h.apple
-	case "google":
-		oauthProvider = h.google
-	default:
-		respondError(w, http.StatusBadRequest, "unsupported provider")
-		return
-	}
-
-	if oauthProvider == nil {
-		respondError(w, http.StatusNotImplemented, "OAuth provider not configured")
-		return
-	}
-
-	resp, err := h.authService.OAuthLogin(r.Context(), oauthProvider, req.IDToken, req.DeviceName)
-	if err != nil {
-		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActOAuthLogin).
-			Level(audit.LevelWarn).
-			Detail("provider", provider).
-			Detail("error", err.Error()).
-			Send()
-		respondError(w, http.StatusUnauthorized, err.Error())
-		return
-	}
-
-	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActOAuthLogin).
-		Actor(resp.User.ID, resp.User.Email).
-		Detail("provider", provider).
-		Send()
-	respondJSON(w, http.StatusOK, resp)
 }
 
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {

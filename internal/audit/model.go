@@ -36,7 +36,6 @@ const (
 	ActRegister      Action = "REGISTER"
 	ActLogin         Action = "LOGIN"
 	ActLoginFailed   Action = "LOGIN_FAILED"
-	ActOAuthLogin    Action = "OAUTH_LOGIN"
 	ActRefreshToken  Action = "REFRESH_TOKEN"
 	ActLogout        Action = "LOGOUT"
 	ActLogoutAll     Action = "LOGOUT_ALL"

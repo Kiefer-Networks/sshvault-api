@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -19,17 +18,15 @@ import (
 // --- Mock Repositories ---
 
 type mockUserRepo struct {
-	users         map[uuid.UUID]*model.User
-	emailIndex    map[string]*model.User
-	oauthAccounts map[string]*model.OAuthAccount // key: provider:providerID
-	createErr     error
+	users      map[uuid.UUID]*model.User
+	emailIndex map[string]*model.User
+	createErr  error
 }
 
 func newMockUserRepo() *mockUserRepo {
 	return &mockUserRepo{
-		users:         make(map[uuid.UUID]*model.User),
-		emailIndex:    make(map[string]*model.User),
-		oauthAccounts: make(map[string]*model.OAuthAccount),
+		users:      make(map[uuid.UUID]*model.User),
+		emailIndex: make(map[string]*model.User),
 	}
 }
 
@@ -66,22 +63,6 @@ func (m *mockUserRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return
 func (m *mockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) (int64, error) { return 0, nil }
 
 func (m *mockUserRepo) GetPurgableUserIDs(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
-	return nil, nil
-}
-
-func (m *mockUserRepo) CreateOAuthAccount(_ context.Context, account *model.OAuthAccount) error {
-	account.ID = uuid.New()
-	key := account.Provider + ":" + account.ProviderID
-	m.oauthAccounts[key] = account
-	return nil
-}
-
-func (m *mockUserRepo) GetOAuthAccount(_ context.Context, provider, providerID string) (*model.OAuthAccount, error) {
-	key := provider + ":" + providerID
-	return m.oauthAccounts[key], nil
-}
-
-func (m *mockUserRepo) GetOAuthAccountsByUser(_ context.Context, _ uuid.UUID) ([]model.OAuthAccount, error) {
 	return nil, nil
 }
 
@@ -454,81 +435,6 @@ func TestLogoutNonExistentToken(t *testing.T) {
 	// Should not error — graceful no-op
 	if err := svc.Logout(context.Background(), "nonexistent-token"); err != nil {
 		t.Fatalf("Logout with nonexistent token: %v", err)
-	}
-}
-
-// --- OAuth Login Tests ---
-
-type mockOAuthProvider struct {
-	info *auth.OAuthUserInfo
-	err  error
-}
-
-func (m *mockOAuthProvider) VerifyToken(_ context.Context, _ string) (*auth.OAuthUserInfo, error) {
-	return m.info, m.err
-}
-
-func TestOAuthLoginNewUser(t *testing.T) {
-	svc, userRepo, _, _, _ := newTestAuthService(t)
-
-	provider := &mockOAuthProvider{
-		info: &auth.OAuthUserInfo{
-			Provider:   "google",
-			ProviderID: "google-uid-123",
-			Email:      "oauth@example.com",
-		},
-	}
-
-	resp, err := svc.OAuthLogin(context.Background(), provider, "fake-id-token", "iPhone 15")
-	if err != nil {
-		t.Fatalf("OAuthLogin: %v", err)
-	}
-	if resp.User.Email != "oauth@example.com" {
-		t.Errorf("email = %q, want %q", resp.User.Email, "oauth@example.com")
-	}
-	if len(userRepo.users) != 1 {
-		t.Errorf("users = %d, want 1", len(userRepo.users))
-	}
-}
-
-func TestOAuthLoginExistingUser(t *testing.T) {
-	svc, _, _, _, _ := newTestAuthService(t)
-	ctx := context.Background()
-
-	provider := &mockOAuthProvider{
-		info: &auth.OAuthUserInfo{
-			Provider:   "apple",
-			ProviderID: "apple-uid-456",
-			Email:      "existing@example.com",
-		},
-	}
-
-	// First call creates user + links OAuth
-	_, err := svc.OAuthLogin(ctx, provider, "token1", "Mac")
-	if err != nil {
-		t.Fatalf("first OAuthLogin: %v", err)
-	}
-
-	// Second call should find the linked account
-	resp, err := svc.OAuthLogin(ctx, provider, "token2", "Mac")
-	if err != nil {
-		t.Fatalf("second OAuthLogin: %v", err)
-	}
-	if resp.User.Email != "existing@example.com" {
-		t.Errorf("email = %q, want %q", resp.User.Email, "existing@example.com")
-	}
-}
-
-func TestOAuthLoginVerificationFailed(t *testing.T) {
-	svc, _, _, _, _ := newTestAuthService(t)
-
-	provider := &mockOAuthProvider{
-		err: fmt.Errorf("token expired"),
-	}
-
-	_, err := svc.OAuthLogin(context.Background(), provider, "bad-token", "")
-	if err == nil {
-		t.Fatal("expected error for failed verification")
 	}
 }
 

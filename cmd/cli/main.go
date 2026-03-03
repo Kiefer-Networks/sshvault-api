@@ -156,29 +156,6 @@ func userInfoCmd() *cobra.Command {
 				fmt.Printf("Deleted:    %s\n", user.deletedAt.Format(time.RFC3339))
 			}
 
-			// OAuth accounts
-			oauthRows, err := pool.Query(ctx,
-				`SELECT provider, provider_id, email FROM oauth_accounts WHERE user_id = $1`, user.id)
-			if err == nil {
-				defer oauthRows.Close()
-				fmt.Println("\nOAuth Accounts:")
-				hasOAuth := false
-				for oauthRows.Next() {
-					var provider, providerID, oaEmail string
-					if err := oauthRows.Scan(&provider, &providerID, &oaEmail); err != nil {
-						continue
-					}
-					fmt.Printf("  - %s: %s (%s)\n", provider, providerID, oaEmail)
-					hasOAuth = true
-				}
-				if err := oauthRows.Err(); err != nil {
-					return fmt.Errorf("iterating oauth rows: %w", err)
-				}
-				if !hasOAuth {
-					fmt.Println("  (none)")
-				}
-			}
-
 			// Subscription
 			var subProvider, subStatus string
 			var periodEnd *time.Time

@@ -261,19 +261,9 @@ func main() {
 	userService := service.NewUserService(userRepo, tokenRepo, transactor)
 	billingService := service.NewBillingService(subRepo, billingProvider, billingEnabled)
 
-	// OAuth providers
-	var appleOAuth auth.OAuthProvider
-	var googleOAuth auth.OAuthProvider
-	if cfg.OAuth.AppleClientID != "" {
-		appleOAuth = auth.NewAppleOAuth(cfg.OAuth.AppleClientID)
-	}
-	if cfg.OAuth.GoogleClientID != "" {
-		googleOAuth = auth.NewGoogleOAuth(cfg.OAuth.GoogleClientID)
-	}
-
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
-	authHandler := handler.NewAuthHandler(authService, appleOAuth, googleOAuth, auditLogger)
+	authHandler := handler.NewAuthHandler(authService, auditLogger)
 	vaultHandler := handler.NewVaultHandler(vaultService, billingService, auditLogger)
 	userHandler := handler.NewUserHandler(userService, auditLogger)
 	deviceHandler := handler.NewDeviceHandler(deviceRepo, auditLogger)
@@ -348,7 +338,6 @@ func main() {
 
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
-			r.Post("/oauth/{provider}", authHandler.OAuth)
 			r.Get("/verify-email", authHandler.VerifyEmail)
 			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)

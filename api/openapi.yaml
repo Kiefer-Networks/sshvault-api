@@ -157,38 +157,6 @@ paths:
         "200":
           description: Logged out
 
-  /v1/auth/oauth/{provider}:
-    post:
-      tags: [Auth]
-      summary: OAuth login/register
-      operationId: oauthLogin
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [apple, google]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [id_token]
-              properties:
-                id_token:
-                  type: string
-                device_name:
-                  type: string
-      responses:
-        "200":
-          description: OAuth login successful
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-
   /v1/auth/verify-email:
     post:
       tags: [Auth]

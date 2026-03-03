@@ -67,11 +67,6 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type OAuthRequest struct {
-	IDToken    string `json:"id_token"`
-	DeviceName string `json:"device_name,omitempty"`
-}
-
 type AuthResponse struct {
 	User         *model.User `json:"user"`
 	AccessToken  string      `json:"access_token"`
@@ -260,59 +255,6 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 		return nil // already revoked or doesn't exist
 	}
 	return s.tokenRepo.Revoke(ctx, stored.ID)
-}
-
-func (s *AuthService) OAuthLogin(ctx context.Context, provider auth.OAuthProvider, idToken, deviceName string) (*AuthResponse, error) {
-	info, err := provider.VerifyToken(ctx, idToken)
-	if err != nil {
-		log.Warn().Err(err).Str("provider", "oauth").Msg("OAuth token verification failed")
-		return nil, fmt.Errorf("verifying OAuth token: %w", err)
-	}
-
-	// Check if OAuth account already linked
-	oauthAccount, err := s.userRepo.GetOAuthAccount(ctx, info.Provider, info.ProviderID)
-	if err != nil {
-		return nil, fmt.Errorf("checking OAuth account: %w", err)
-	}
-
-	var user *model.User
-	if oauthAccount != nil {
-		user, err = s.userRepo.GetByID(ctx, oauthAccount.UserID)
-		if err != nil || user == nil {
-			return nil, fmt.Errorf("user not found for OAuth account")
-		}
-	} else {
-		if info.Email != "" {
-			user, err = s.userRepo.GetByEmail(ctx, info.Email)
-			if err != nil {
-				return nil, fmt.Errorf("checking email: %w", err)
-			}
-		}
-
-		if user == nil {
-			user = &model.User{
-				Email:    info.Email,
-				Password: "", // OAuth users don't have a password
-				Verified: true,
-			}
-			if err := s.userRepo.Create(ctx, user); err != nil {
-				return nil, fmt.Errorf("creating OAuth user: %w", err)
-			}
-			log.Info().Str("email", info.Email).Str("provider", info.Provider).Msg("OAuth user registered")
-		}
-
-		account := &model.OAuthAccount{
-			UserID:     user.ID,
-			Provider:   info.Provider,
-			ProviderID: info.ProviderID,
-			Email:      info.Email,
-		}
-		if err := s.userRepo.CreateOAuthAccount(ctx, account); err != nil {
-			return nil, fmt.Errorf("linking OAuth account: %w", err)
-		}
-	}
-
-	return s.issueTokenPair(ctx, user, deviceName)
 }
 
 // VerifyEmail validates an email verification token and marks the user as verified.

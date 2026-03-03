@@ -116,7 +116,6 @@ func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int
 		`DELETE FROM vaults WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM devices WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		`DELETE FROM oauth_accounts WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		// login_attempts has no user_id — match by email
 		`DELETE FROM login_attempts WHERE email IN (SELECT email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 	}
@@ -157,66 +156,4 @@ func (r *pgUserRepo) GetPurgableUserIDs(ctx context.Context, olderThan time.Time
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
-}
-
-func (r *pgUserRepo) CreateOAuthAccount(ctx context.Context, account *model.OAuthAccount) error {
-	query := `
-		INSERT INTO oauth_accounts (id, user_id, provider, provider_id, email, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
-
-	if account.ID == uuid.Nil {
-		account.ID = uuid.New()
-	}
-	account.CreatedAt = time.Now()
-
-	_, err := r.pool.Exec(ctx, query,
-		account.ID, account.UserID, account.Provider, account.ProviderID,
-		account.Email, account.CreatedAt)
-	if err != nil {
-		return fmt.Errorf("creating oauth account: %w", err)
-	}
-	return nil
-}
-
-func (r *pgUserRepo) GetOAuthAccount(ctx context.Context, provider, providerID string) (*model.OAuthAccount, error) {
-	query := `
-		SELECT id, user_id, provider, provider_id, email, created_at
-		FROM oauth_accounts WHERE provider = $1 AND provider_id = $2`
-
-	var account model.OAuthAccount
-	err := r.pool.QueryRow(ctx, query, provider, providerID).Scan(
-		&account.ID, &account.UserID, &account.Provider,
-		&account.ProviderID, &account.Email, &account.CreatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("getting oauth account: %w", err)
-	}
-	return &account, nil
-}
-
-func (r *pgUserRepo) GetOAuthAccountsByUser(ctx context.Context, userID uuid.UUID) ([]model.OAuthAccount, error) {
-	query := `
-		SELECT id, user_id, provider, provider_id, email, created_at
-		FROM oauth_accounts WHERE user_id = $1`
-
-	rows, err := r.pool.Query(ctx, query, userID)
-	if err != nil {
-		return nil, fmt.Errorf("getting oauth accounts: %w", err)
-	}
-	defer rows.Close()
-
-	var accounts []model.OAuthAccount
-	for rows.Next() {
-		var a model.OAuthAccount
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Provider, &a.ProviderID, &a.Email, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scanning oauth account: %w", err)
-		}
-		accounts = append(accounts, a)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating rows: %w", err)
-	}
-	return accounts, nil
 }
