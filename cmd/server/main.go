@@ -279,6 +279,26 @@ func main() {
 	deviceHandler := handler.NewDeviceHandler(deviceRepo, auditLogger)
 	billingHandler := handler.NewBillingHandler(billingService, userService, auditLogger)
 	auditHandler := handler.NewAuditHandler(auditRepo)
+	attestationHandler := handler.NewAttestationHandler(privKey, cfg.Server.ServerID, "v1")
+
+	// Proof-of-Work guard
+	powGuard := mw.NewPowGuard(16) // 16 leading zero bits base difficulty
+
+	// Background PoW challenge cleanup (every 5 minutes)
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				powGuard.Cleanup()
+			}
+		}
+	}()
 
 	// Middleware
 	authMiddleware := mw.NewAuthMiddleware(jwtManager)
@@ -298,6 +318,7 @@ func main() {
 	r.Use(mw.BodyLimit(10 * 1024 * 1024)) // 10 MB global limit
 	r.Use(cors.Handler(mw.CORSOptions(cfg.Server.CORSOrigins)))
 	r.Use(chimiddleware.Compress(5))
+	r.Use(mw.ResponsePadding)
 
 	// System routes
 	r.Get("/health", healthHandler.Health)
@@ -310,11 +331,21 @@ func main() {
 
 	// API v1
 	r.Route("/v1", func(r chi.Router) {
-		// Auth routes (public, with strict rate limiting)
+		// Attestation (public)
+		r.Get("/attestation", attestationHandler.GetAttestation)
+
+		// Auth routes (public, with strict rate limiting and timing equalization)
 		r.Route("/auth", func(r chi.Router) {
 			r.Use(authRateLimiter.Limit)
-			r.Post("/register", authHandler.Register)
-			r.Post("/login", authHandler.Login)
+			r.Use(mw.TimingEqualization(500 * time.Millisecond))
+
+			// PoW challenge endpoint (no PoW required to get a challenge)
+			r.Get("/challenge", powGuard.HandleChallenge)
+
+			// PoW-protected auth endpoints
+			r.With(powGuard.RequirePoW).Post("/register", authHandler.Register)
+			r.With(powGuard.RequirePoW).Post("/login", authHandler.Login)
+
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
 			r.Post("/oauth/{provider}", authHandler.OAuth)

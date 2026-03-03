@@ -28,6 +28,7 @@ type ServerConfig struct {
 	APIBaseURL     string `envconfig:"API_BASE_URL" default:"https://api.sshvault.app"`
 	TrustedProxies string `envconfig:"TRUSTED_PROXIES" default:"127.0.0.1/8,::1/128"`
 	CORSOrigins    string `envconfig:"CORS_ORIGINS"`
+	ServerID       string `envconfig:"SERVER_ID" default:"shellvault-primary"`
 }
 
 type DatabaseConfig struct {
