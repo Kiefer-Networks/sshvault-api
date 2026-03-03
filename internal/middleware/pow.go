@@ -131,7 +131,7 @@ func (g *PowGuard) HandleChallenge(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(challenge)
+	_ = json.NewEncoder(w).Encode(challenge)
 }
 
 func (g *PowGuard) currentDifficulty() int {

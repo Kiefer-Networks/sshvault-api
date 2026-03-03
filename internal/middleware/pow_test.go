@@ -113,8 +113,8 @@ func TestPowHandleChallenge(t *testing.T) {
 
 func TestPowCleanup(t *testing.T) {
 	g := NewPowGuard(4)
-	g.GenerateChallenge()
-	g.GenerateChallenge()
+	_, _ = g.GenerateChallenge()
+	_, _ = g.GenerateChallenge()
 
 	// Manually expire all
 	g.mu.Lock()

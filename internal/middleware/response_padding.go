@@ -27,7 +27,7 @@ func ResponsePadding(next http.Handler) http.Handler {
 
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(padded)))
 		w.WriteHeader(pw.statusCode)
-		w.Write(padded)
+		_, _ = w.Write(padded)
 	})
 }
 

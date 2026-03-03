@@ -9,7 +9,7 @@ import (
 func TestResponsePaddingTo1KB(t *testing.T) {
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`)) // 15 bytes
+		_, _ = w.Write([]byte(`{"status":"ok"}`)) // 15 bytes
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -34,7 +34,7 @@ func TestResponsePaddingExact1KB(t *testing.T) {
 
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		_, _ = w.Write(data)
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -55,7 +55,7 @@ func TestResponsePaddingMultiKB(t *testing.T) {
 
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		_, _ = w.Write(data)
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)

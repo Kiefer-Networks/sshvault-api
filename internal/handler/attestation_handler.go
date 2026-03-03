@@ -3,7 +3,6 @@ package handler
 import (
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -79,7 +78,5 @@ func (h *AttestationHandler) GetAttestation(w http.ResponseWriter, r *http.Reque
 		Signature:  base64.StdEncoding.EncodeToString(signature),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	respondJSON(w, http.StatusOK, resp)
 }
