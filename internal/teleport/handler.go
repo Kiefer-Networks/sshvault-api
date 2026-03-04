@@ -3,6 +3,7 @@ package teleport
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -155,6 +156,12 @@ func (h *Handler) ListNodes(w http.ResponseWriter, r *http.Request) {
 	nodes, err := h.service.ListNodes(r.Context(), userID, clusterID)
 	if err != nil {
 		log.Warn().Err(err).Str("cluster_id", clusterID.String()).Msg("failed to list teleport nodes")
+		if strings.Contains(err.Error(), "unsupported auth method") ||
+			strings.Contains(err.Error(), "not found") ||
+			strings.Contains(err.Error(), "login required") {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "failed to list nodes")
 		return
 	}

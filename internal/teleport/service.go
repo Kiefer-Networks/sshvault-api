@@ -255,6 +255,12 @@ func (s *Service) clusterCredentials(cluster *Cluster) (client.Credentials, erro
 			return nil, fmt.Errorf("no identity file for cluster %s", cluster.ID)
 		}
 		return client.LoadIdentityFileFromString(string(cluster.Identity)), nil
+	case "sso_oidc", "sso_saml", "local":
+		// SSO and local auth methods store the identity after a successful login.
+		if len(cluster.Identity) == 0 {
+			return nil, fmt.Errorf("login required for cluster %s (auth: %s)", cluster.ID, cluster.AuthMethod)
+		}
+		return client.LoadIdentityFileFromString(string(cluster.Identity)), nil
 	default:
 		return nil, fmt.Errorf("unsupported auth method: %s", cluster.AuthMethod)
 	}
