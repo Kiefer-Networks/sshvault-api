@@ -39,7 +39,7 @@ Set these in your `.env` or deployment configuration:
 APPLE_KEY_PATH=/path/to/AuthKey_XXXXXXXXXX.p8
 APPLE_KEY_ID=XXXXXXXXXX
 APPLE_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-APPLE_BUNDLE_ID=com.kiefernetworks.shellvault
+APPLE_BUNDLE_ID=de.kiefer-networks.shellvault
 APPLE_ENVIRONMENT=production
 ```
 
