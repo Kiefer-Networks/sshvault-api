@@ -126,7 +126,7 @@ func (p *GoogleProvider) HandleWebhook(ctx context.Context, payload, _ string) e
 	subNotif := notification.SubscriptionNotification
 	log.Info().
 		Int("type", subNotif.NotificationType).
-		Str("purchase_token", subNotif.PurchaseToken).
+		Str("purchase_token", maskToken(subNotif.PurchaseToken)).
 		Str("subscription_id", subNotif.SubscriptionID).
 		Msg("processing Google subscription notification")
 
@@ -140,13 +140,13 @@ func (p *GoogleProvider) HandleWebhook(ctx context.Context, payload, _ string) e
 	sub, err := p.subRepo.GetByProviderSubID(ctx, subNotif.PurchaseToken)
 	if err != nil || sub == nil {
 		log.Warn().
-			Str("purchase_token", subNotif.PurchaseToken).
+			Str("purchase_token", maskToken(subNotif.PurchaseToken)).
 			Msg("Google webhook for unknown subscription, skipping")
 		return nil
 	}
 
 	// Update subscription status based on Google's response
-	newStatus := mapGoogleSubscriptionState(googleSub.SubscriptionState)
+	newStatus := MapGoogleSubscriptionState(googleSub.SubscriptionState)
 	if newStatus != sub.Status {
 		sub.Status = newStatus
 		if googleSub.ExpiryTime != "" {
@@ -180,7 +180,7 @@ func (p *GoogleProvider) VerifyAndUpsert(ctx context.Context, userID uuid.UUID, 
 		return nil, fmt.Errorf("verifying purchase: %w", err)
 	}
 
-	status := mapGoogleSubscriptionState(googleSub.SubscriptionState)
+	status := MapGoogleSubscriptionState(googleSub.SubscriptionState)
 
 	// Check if subscription already exists for this user
 	existing, _ := p.subRepo.GetByUserID(ctx, userID)
@@ -278,7 +278,8 @@ const (
 	googleStateExpired     = "SUBSCRIPTION_STATE_EXPIRED"
 )
 
-func mapGoogleSubscriptionState(state string) string {
+// MapGoogleSubscriptionState maps Google Play subscription state strings to ShellVault status strings.
+func MapGoogleSubscriptionState(state string) string {
 	switch state {
 	case googleStateActive, googleStateGracePeriod:
 		return model.SubStatusActive

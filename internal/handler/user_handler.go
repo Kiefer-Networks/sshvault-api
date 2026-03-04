@@ -51,7 +51,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.userService.UpdateProfile(r.Context(), userID, &req)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "failed to update profile")
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *UserHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	h.audit.LogFromRequest(r, audit.CatUser, audit.ActAccountDelete).
 		Level(audit.LevelWarn).
 		Send()
-	respondJSON(w, http.StatusOK, map[string]string{
+	respondJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "account scheduled for deletion",
 		"message": "Your account and data will be permanently deleted in 30 days.",
 	})
@@ -102,7 +102,7 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userService.ChangePassword(r.Context(), userID, &req); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "failed to change password")
 		return
 	}
 

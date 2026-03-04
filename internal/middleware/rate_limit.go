@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"sync"
@@ -72,6 +74,19 @@ func (rl *RateLimiter) cleanup() {
 	}
 }
 
+func (rl *RateLimiter) setRateLimitHeaders(w http.ResponseWriter, limiter *rate.Limiter) {
+	limit := limiter.Burst()
+	remaining := int(math.Max(0, math.Floor(limiter.Tokens())))
+	// Seconds until one new token is available (1 / rate).
+	resetSecs := 1
+	if limiter.Limit() > 0 {
+		resetSecs = int(math.Ceil(float64(time.Second) / float64(limiter.Limit()) / float64(time.Second)))
+	}
+	w.Header().Set("RateLimit-Limit", fmt.Sprintf("%d", limit))
+	w.Header().Set("RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+	w.Header().Set("RateLimit-Reset", fmt.Sprintf("%d", resetSecs))
+}
+
 func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Use RemoteAddr which is already set correctly by chi's RealIP middleware.
@@ -84,11 +99,13 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 
 		limiter := rl.getVisitor(key)
 		if !limiter.Allow() {
+			rl.setRateLimitHeaders(w, limiter)
 			w.Header().Set("Retry-After", "60")
 			respondJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 
+		rl.setRateLimitHeaders(w, limiter)
 		next.ServeHTTP(w, r)
 	})
 }

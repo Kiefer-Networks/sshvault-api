@@ -62,7 +62,7 @@ func TestCORSOptions_SkipsEmptyEntries(t *testing.T) {
 func TestCORSOptions_AllowedMethods(t *testing.T) {
 	opts := CORSOptions("")
 
-	expected := []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	expected := []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 	if !reflect.DeepEqual(opts.AllowedMethods, expected) {
 		t.Errorf("AllowedMethods = %v, want %v", opts.AllowedMethods, expected)
 	}
@@ -71,7 +71,7 @@ func TestCORSOptions_AllowedMethods(t *testing.T) {
 func TestCORSOptions_AllowedHeaders(t *testing.T) {
 	opts := CORSOptions("")
 
-	expected := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"}
+	expected := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce"}
 	if !reflect.DeepEqual(opts.AllowedHeaders, expected) {
 		t.Errorf("AllowedHeaders = %v, want %v", opts.AllowedHeaders, expected)
 	}
@@ -112,12 +112,12 @@ func TestCORSOptions_CustomOriginsPreserveOtherSettings(t *testing.T) {
 		t.Errorf("MaxAge = %d, want 300 even with custom origins", opts.MaxAge)
 	}
 
-	expectedMethods := []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	expectedMethods := []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 	if !reflect.DeepEqual(opts.AllowedMethods, expectedMethods) {
 		t.Errorf("AllowedMethods = %v, want %v", opts.AllowedMethods, expectedMethods)
 	}
 
-	expectedHeaders := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"}
+	expectedHeaders := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce"}
 	if !reflect.DeepEqual(opts.AllowedHeaders, expectedHeaders) {
 		t.Errorf("AllowedHeaders = %v, want %v", opts.AllowedHeaders, expectedHeaders)
 	}

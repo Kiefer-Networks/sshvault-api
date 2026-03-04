@@ -55,7 +55,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 
 	url, err := h.billingService.CreateCheckoutSession(r.Context(), userID, user.Email)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondError(w, http.StatusInternalServerError, "failed to create checkout session")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 
 	url, err := h.billingService.CreatePortalSession(r.Context(), userID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondError(w, http.StatusInternalServerError, "failed to create portal session")
 		return
 	}
 

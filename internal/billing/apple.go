@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -245,7 +246,7 @@ func (p *AppleProvider) VerifyAndUpsert(ctx context.Context, userID uuid.UUID, t
 		return nil, fmt.Errorf("verifying purchase: %w", err)
 	}
 
-	status := mapAppleSubscriptionStatus(info.Status)
+	status := MapAppleSubscriptionStatus(info.Status)
 	origTxID := info.OriginalTransactionID
 	if origTxID == "" {
 		origTxID = transactionID
@@ -337,8 +338,12 @@ func (p *AppleProvider) verifyAndDecodeJWS(jws string) ([]byte, error) {
 	}
 
 	// Verify the chain against Apple Root CA G3.
+	rootCA, err := appleRootCAG3()
+	if err != nil {
+		return nil, fmt.Errorf("loading Apple Root CA G3: %w", err)
+	}
 	rootPool := x509.NewCertPool()
-	rootPool.AddCert(appleRootCAG3())
+	rootPool.AddCert(rootCA)
 
 	intermediatePool := x509.NewCertPool()
 	for _, cert := range certs[1:] {
@@ -469,7 +474,8 @@ const (
 	appleStatusRevoked      = 5
 )
 
-func mapAppleSubscriptionStatus(status int) string {
+// MapAppleSubscriptionStatus maps Apple subscription status codes to ShellVault status strings.
+func MapAppleSubscriptionStatus(status int) string {
 	switch status {
 	case appleStatusActive, appleStatusGracePeriod:
 		return model.SubStatusActive
@@ -513,19 +519,26 @@ func mapAppleNotificationType(notifType, subtype string) string {
 // APPLE ROOT CA G3
 // ============================================================
 
+var (
+	appleRootCAG3Once sync.Once
+	appleRootCAG3Cert *x509.Certificate
+	appleRootCAG3Err  error
+)
+
 // appleRootCAG3 returns the Apple Root CA - G3 certificate used to
 // verify the x5c certificate chain in JWS tokens from the App Store
 // Server API and Server Notifications V2.
-func appleRootCAG3() *x509.Certificate {
-	block, _ := pem.Decode([]byte(appleRootCAG3PEM))
-	if block == nil {
-		panic("failed to decode Apple Root CA G3 PEM")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		panic("failed to parse Apple Root CA G3: " + err.Error())
-	}
-	return cert
+// The certificate is parsed once and cached for subsequent calls.
+func appleRootCAG3() (*x509.Certificate, error) {
+	appleRootCAG3Once.Do(func() {
+		block, _ := pem.Decode([]byte(appleRootCAG3PEM))
+		if block == nil {
+			appleRootCAG3Err = fmt.Errorf("failed to decode Apple Root CA G3 PEM")
+			return
+		}
+		appleRootCAG3Cert, appleRootCAG3Err = x509.ParseCertificate(block.Bytes)
+	})
+	return appleRootCAG3Cert, appleRootCAG3Err
 }
 
 // Apple Root CA - G3 (valid until 2039-02-20).

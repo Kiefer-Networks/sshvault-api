@@ -23,8 +23,8 @@ func CORSOptions(corsOrigins string) cors.Options {
 	}
 	return cors.Options{
 		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce"},
 		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           300,

@@ -181,6 +181,41 @@ func TestRequestID_ResponseHeaderMatchesContext(t *testing.T) {
 	}
 }
 
+func TestRequestID_RejectsInvalidID(t *testing.T) {
+	handler := RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{"too long", "aaaaaaaaaa-bbbbbbbbbb-cccccccccc-dddddddd"},
+		{"special chars", "abc<script>alert(1)</script>"},
+		{"spaces", "abc def ghi"},
+		{"unicode", "abc\u00e9def"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("X-Request-ID", tt.id)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			respID := w.Header().Get("X-Request-ID")
+			if respID == tt.id {
+				t.Errorf("invalid X-Request-ID %q should have been replaced", tt.id)
+			}
+			// Should be a valid UUID
+			parts := strings.Split(respID, "-")
+			if len(parts) != 5 {
+				t.Errorf("replaced ID %q does not look like a UUID", respID)
+			}
+		})
+	}
+}
+
 func TestRequestID_DifferentHTTPMethods(t *testing.T) {
 	methods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 	handler := RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

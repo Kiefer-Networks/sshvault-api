@@ -362,7 +362,7 @@ func reconcileApple(ctx context.Context, cfg *config.Config) (checked, corrected
 			continue
 		}
 
-		newStatus := mapAppleStatusForSync(info.Status)
+		newStatus := billing.MapAppleSubscriptionStatus(info.Status)
 		if newStatus != s.status {
 			if _, err := pool.Exec(ctx,
 				`UPDATE subscriptions SET status = $1, updated_at = now() WHERE id = $2`,
@@ -378,20 +378,6 @@ func reconcileApple(ctx context.Context, cfg *config.Config) (checked, corrected
 	return checked, corrected, nil
 }
 
-func mapAppleStatusForSync(status int) string {
-	switch status {
-	case 1, 4: // Active, Grace Period
-		return "active"
-	case 2: // Expired
-		return "expired"
-	case 3: // Billing Retry
-		return "past_due"
-	case 5: // Revoked
-		return "canceled"
-	default:
-		return "canceled"
-	}
-}
 
 // reconcileGoogle verifies all active Google subscriptions against the
 // Google Play Developer API and corrects stale statuses in the database.
@@ -440,20 +426,7 @@ func reconcileGoogle(ctx context.Context, cfg *config.Config) (checked, correcte
 			continue
 		}
 
-		// Map Google state to our status
-		var newStatus string
-		switch googleSub.SubscriptionState {
-		case "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD":
-			newStatus = "active"
-		case "SUBSCRIPTION_STATE_CANCELED", "SUBSCRIPTION_STATE_PAUSED":
-			newStatus = "canceled"
-		case "SUBSCRIPTION_STATE_ON_HOLD":
-			newStatus = "past_due"
-		case "SUBSCRIPTION_STATE_EXPIRED":
-			newStatus = "expired"
-		default:
-			newStatus = "canceled"
-		}
+		newStatus := billing.MapGoogleSubscriptionState(googleSub.SubscriptionState)
 
 		if newStatus != s.status {
 			if _, err := pool.Exec(ctx,

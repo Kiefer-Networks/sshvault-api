@@ -109,6 +109,74 @@ func TestRateLimiterDifferentIPs(t *testing.T) {
 	}
 }
 
+func TestRateLimiterHeaders(t *testing.T) {
+	rl := NewRateLimiter(1, 5) // 1 rps, burst 5
+	defer rl.Stop()
+
+	handler := rl.Limit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "10.10.10.10:5555"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	limit := rec.Header().Get("RateLimit-Limit")
+	if limit != "5" {
+		t.Errorf("RateLimit-Limit = %q, want %q", limit, "5")
+	}
+
+	remaining := rec.Header().Get("RateLimit-Remaining")
+	if remaining == "" {
+		t.Error("RateLimit-Remaining header should be set")
+	}
+
+	reset := rec.Header().Get("RateLimit-Reset")
+	if reset == "" {
+		t.Error("RateLimit-Reset header should be set")
+	}
+}
+
+func TestRateLimiterHeadersOn429(t *testing.T) {
+	rl := NewRateLimiter(0.001, 1) // Very low rate, burst 1
+	defer rl.Stop()
+
+	handler := rl.Limit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Exhaust burst
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "10.10.10.11:5555"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Trigger 429
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "10.10.10.11:5555"
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+
+	if rec.Header().Get("RateLimit-Limit") == "" {
+		t.Error("RateLimit-Limit should be set on 429 responses")
+	}
+	if rec.Header().Get("RateLimit-Remaining") != "0" {
+		t.Errorf("RateLimit-Remaining = %q, want %q", rec.Header().Get("RateLimit-Remaining"), "0")
+	}
+	if rec.Header().Get("RateLimit-Reset") == "" {
+		t.Error("RateLimit-Reset should be set on 429 responses")
+	}
+}
+
 func TestStrictAuthLimit(t *testing.T) {
 	rl := StrictAuthLimit()
 	defer rl.Stop()
