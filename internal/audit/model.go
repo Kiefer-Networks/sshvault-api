@@ -67,6 +67,7 @@ const (
 	ActWebhookStripe Action = "WEBHOOK_STRIPE"
 	ActWebhookApple  Action = "WEBHOOK_APPLE"
 	ActWebhookGoogle Action = "WEBHOOK_GOOGLE"
+	ActCouponRedeem  Action = "COUPON_REDEEM"
 
 	// Teleport actions
 	ActClusterRegister Action = "CLUSTER_REGISTER"

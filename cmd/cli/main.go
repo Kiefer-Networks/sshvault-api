@@ -42,6 +42,7 @@ func main() {
 
 	root.AddCommand(userCmd())
 	root.AddCommand(billingCmd())
+	root.AddCommand(couponCmd())
 	root.AddCommand(backupCmd())
 
 	if err := root.Execute(); err != nil {

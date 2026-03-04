@@ -27,6 +27,7 @@ import (
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
 	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/config"
+	"github.com/kiefernetworks/shellvault-server/internal/coupon"
 	"github.com/kiefernetworks/shellvault-server/internal/crypto"
 	"github.com/kiefernetworks/shellvault-server/internal/handler"
 	"github.com/kiefernetworks/shellvault-server/internal/mail"
@@ -339,6 +340,11 @@ func main() {
 		}
 	}()
 
+	// Coupon
+	couponRepo := coupon.NewRepository(pool)
+	couponService := coupon.NewService(pool, couponRepo)
+	couponHandler := coupon.NewHandler(couponService, auditLogger)
+
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
 	authHandler := handler.NewAuthHandler(authService, auditLogger)
@@ -455,6 +461,7 @@ func main() {
 			r.Post("/billing/checkout/teleport", billingHandler.CreateTeleportCheckout)
 			r.Post("/billing/verify-google", billingHandler.VerifyGoogle)
 			r.Post("/billing/verify-apple", billingHandler.VerifyApple)
+			r.Post("/billing/redeem", couponHandler.Redeem)
 
 			// Teleport (requires addon purchase)
 			r.Route("/teleport", func(r chi.Router) {
