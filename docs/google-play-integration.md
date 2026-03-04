@@ -1,352 +1,118 @@
-# Google Play Billing Integration
+# Google Play Billing — Setup Guide
 
-This document describes the current state, required changes, and implementation steps for full Google Play Billing integration in ShellVault.
+Server and client code for Google Play Billing is fully implemented. This guide covers the external setup steps required to activate it.
 
-## Current State
+## Prerequisites
 
-### What exists
+- [Google Play Console](https://play.google.com/console) account with a published app
+- [Google Cloud Console](https://console.cloud.google.com) project linked to the Play Console
 
-| Component | File | Status |
-|-----------|------|--------|
-| Provider stub | `internal/billing/google.go` | Stub — all methods return errors or log TODOs |
-| Webhook route | `POST /v1/webhooks/google` | Registered in `cmd/server/main.go` |
-| Webhook handler | `internal/handler/billing_handler.go` | Reads body, delegates to provider, always returns 200 |
-| Config field | `GOOGLE_SERVICE_ACCOUNT_PATH` | Loaded via envconfig but never used |
-| DB model | `internal/model/subscription.go` | Provider-agnostic, supports `provider = "google"` |
-| Subscription repo | `internal/repository/subscription_repo.go` | Full CRUD, provider-agnostic |
-| Audit action | `internal/audit/model.go` | `ActWebhookGoogle` defined |
-| OpenAPI spec | `api/openapi.yaml` | Endpoint documented |
-| Account deletion | `internal/service/user_service.go` | Sets Google subs to `canceled` in DB |
-| CLI | `cmd/cli/billing.go` | Can create `--provider google` subs manually |
-| Client IAP plugin | `pubspec.yaml` | `in_app_purchase: ^3.2.0` |
-| Client platform detection | `lib/core/utils/platform_utils.dart` | `isNativeIapPlatform` returns `true` on Android |
-| Client billing status | `lib/features/account/domain/entities/billing_status.dart` | Supports `provider: 'google'` |
-| Client UI | `lib/features/settings/presentation/screens/account_sync_screen.dart` | Shows Google Play management link |
+## 1. Create the Subscription Product
 
-### What is missing
+1. Open [Google Play Console](https://play.google.com/console) → your app → **Monetize** → **Subscriptions**
+2. Create a new subscription with product ID: `shellvault_sync_yearly`
+3. Add a base plan (e.g. yearly, auto-renewing)
+4. Set the price (e.g. €12.99/year)
+5. Activate the subscription
 
-| Component | Impact |
-|-----------|--------|
-| Provider not instantiated in `cmd/server/main.go` | Google webhooks are processed by whichever provider is active (Stripe or Noop) |
-| No RTDN parsing in `GoogleProvider.HandleWebhook` | Webhook notifications are silently ignored |
-| No Google Play Developer API calls | Server never verifies subscription status |
-| No Pub/Sub signature verification | Any request to `/v1/webhooks/google` is accepted |
-| No client-side subscription purchase flow | Client only has consumable IAP (support), no subscription purchase |
-| No receipt verification endpoint | Client cannot send purchase tokens to server for verification |
-| `billing sync` CLI has no Google support | Only logs a warning |
+Reference: [Create a subscription](https://support.google.com/googleplay/android-developer/answer/140504)
 
-## Architecture
+## 2. Create a Service Account
 
-```
-Android App                    Google Play                   ShellVault Server
-    |                              |                              |
-    |--- buySubscription() ------->|                              |
-    |<-- PurchaseDetails ---------|                              |
-    |                              |                              |
-    |--- POST /v1/billing/verify-google ----------------------->|
-    |    { purchaseToken, productId }                            |
-    |                              |                              |
-    |                              |<-- purchases.subscriptionsv2.get --|
-    |                              |--- subscription status ---------->|
-    |                              |                              |
-    |<-- { active: true } ----------------------------------------|
-    |                              |                              |
-    |                              |--- Pub/Sub RTDN ----------->|
-    |                              |    POST /v1/webhooks/google  |
-    |                              |                              |
-```
+1. Open [Google Cloud Console](https://console.cloud.google.com) → **IAM & Admin** → **Service Accounts**
+2. Create a new service account (e.g. `shellvault-billing`)
+3. Grant the role **Viewer** (or no role — Play Console handles permissions)
+4. Create a JSON key and download it
+5. Place the key on your server (e.g. `/etc/shellvault/google-sa.json`)
 
-## Implementation Steps
+Reference: [Create service account](https://cloud.google.com/iam/docs/service-accounts-create)
 
-### Step 1: Google Cloud Setup (Prerequisites)
+## 3. Grant Play Console API Access
 
-1. **Google Play Console**: Create the subscription product (e.g. `shellvault_sync_monthly`)
-2. **Google Cloud Console**:
-   - Enable "Google Play Android Developer API"
-   - Create a Service Account with "Viewer" role
-   - Download the JSON key file
-   - Grant the Service Account access in Google Play Console (Settings > API access)
-3. **Real-Time Developer Notifications (RTDN)**:
-   - Create a Pub/Sub topic (e.g. `shellvault-subscriptions`)
-   - Create a push subscription pointing to `https://api.example.com/v1/webhooks/google`
-   - Link the topic in Google Play Console (Monetization setup > Real-time developer notifications)
+1. Open [Google Play Console](https://play.google.com/console) → **Settings** → **API access**
+2. Link the Google Cloud project
+3. Find the service account and click **Manage Play Console permissions**
+4. Grant **Financial data** → *View financial data, orders, and cancellation survey responses*
+5. Apply to your app
 
-### Step 2: Server — Google Play Developer API Client
+Reference: [API access](https://support.google.com/googleplay/android-developer/answer/9844686)
 
-**File:** `internal/billing/google.go`
+## 4. Enable the Android Publisher API
 
-**Dependency:** `google.golang.org/api/androidpublisher/v3`
+1. Open [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services** → **Library**
+2. Search for **Google Play Android Developer API**
+3. Click **Enable**
 
-```bash
-go get google.golang.org/api/androidpublisher/v3
-go get google.golang.org/api/option
-```
+Reference: [Enable API](https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com)
 
-Required changes to `GoogleProvider`:
+## 5. Set Up Real-Time Developer Notifications (RTDN)
 
-```go
-type GoogleProvider struct {
-    packageName string
-    service     *androidpublisher.Service
-    subRepo     repository.SubscriptionRepository
-}
+RTDN delivers subscription status changes to your server via Cloud Pub/Sub.
 
-func NewGoogleProvider(
-    serviceAccountPath string,
-    packageName string,
-    subRepo repository.SubscriptionRepository,
-) (*GoogleProvider, error) {
-    ctx := context.Background()
-    data, err := os.ReadFile(serviceAccountPath)
-    if err != nil {
-        return nil, fmt.Errorf("reading service account: %w", err)
-    }
-    svc, err := androidpublisher.NewService(ctx,
-        option.WithCredentialsJSON(data),
-    )
-    if err != nil {
-        return nil, fmt.Errorf("creating androidpublisher service: %w", err)
-    }
-    return &GoogleProvider{
-        packageName: packageName,
-        service:     svc,
-        subRepo:     subRepo,
-    }, nil
-}
-```
+1. Open [Google Cloud Console](https://console.cloud.google.com) → **Pub/Sub** → **Topics**
+2. Create a topic (e.g. `shellvault-subscriptions`)
+3. Create a **push subscription** for the topic:
+   - Endpoint URL: `https://your-api-domain.com/v1/webhooks/google`
+   - Acknowledgement deadline: 30 seconds
+4. Open [Google Play Console](https://play.google.com/console) → your app → **Monetize** → **Monetization setup**
+5. Under **Real-time developer notifications**, set the topic name (e.g. `projects/your-project/topics/shellvault-subscriptions`)
+6. Send a test notification to verify
 
-### Step 3: Server — Verify Purchase Token
+Reference: [RTDN setup](https://developer.android.com/google/play/billing/getting-ready#configure-rtdn)
 
-Add a new method to `GoogleProvider` (not part of the `Provider` interface — called directly):
+## 6. Configure the Server
 
-```go
-func (p *GoogleProvider) VerifyPurchase(ctx context.Context, productID, purchaseToken string) (*androidpublisher.SubscriptionPurchaseV2, error) {
-    return p.service.Purchases.Subscriptionsv2.Get(
-        p.packageName, purchaseToken,
-    ).Context(ctx).Do()
-}
-```
+Add these environment variables to your `.env` or deployment config:
 
-### Step 4: Server — New Endpoint `POST /v1/billing/verify-google`
-
-**File:** `internal/handler/billing_handler.go`
-
-New handler that:
-1. Reads `{ "purchase_token": "...", "product_id": "..." }` from the authenticated user
-2. Calls `GoogleProvider.VerifyPurchase()`
-3. Maps the Google subscription state to internal status
-4. Creates or updates the subscription in DB with `provider = "google"`
-5. Returns `BillingStatus`
-
-Google subscription state mapping:
-
-| Google `SubscriptionState` | ShellVault Status |
-|---------------------------|-------------------|
-| `SUBSCRIPTION_STATE_ACTIVE` | `active` |
-| `SUBSCRIPTION_STATE_CANCELED` | `canceled` |
-| `SUBSCRIPTION_STATE_IN_GRACE_PERIOD` | `active` |
-| `SUBSCRIPTION_STATE_ON_HOLD` | `past_due` |
-| `SUBSCRIPTION_STATE_PAUSED` | `canceled` |
-| `SUBSCRIPTION_STATE_EXPIRED` | `expired` |
-
-**Route registration** in `cmd/server/main.go`:
-
-```go
-r.Post("/billing/verify-google", billingHandler.VerifyGoogle)
-```
-
-### Step 5: Server — Webhook (RTDN) Processing
-
-**File:** `internal/billing/google.go`
-
-Implement `HandleWebhook`:
-
-1. Decode the Pub/Sub push message (base64 JSON envelope)
-2. Extract `DeveloperNotification` → `SubscriptionNotification`
-3. Use `purchaseToken` from the notification to call `VerifyPurchase()`
-4. Update subscription status in DB based on the response
-
-RTDN notification types to handle:
-
-| NotificationType | Action |
-|-----------------|--------|
-| `SUBSCRIPTION_PURCHASED` | Create/activate subscription |
-| `SUBSCRIPTION_RENEWED` | Update period, keep active |
-| `SUBSCRIPTION_CANCELED` | Set status to `canceled` |
-| `SUBSCRIPTION_EXPIRED` | Set status to `expired` |
-| `SUBSCRIPTION_ON_HOLD` | Set status to `past_due` |
-| `SUBSCRIPTION_IN_GRACE_PERIOD` | Keep `active`, log warning |
-| `SUBSCRIPTION_REVOKED` | Set status to `expired` |
-| `SUBSCRIPTION_RECOVERED` | Reactivate to `active` |
-
-Pub/Sub push message format:
-
-```json
-{
-  "message": {
-    "data": "<base64-encoded DeveloperNotification>",
-    "messageId": "...",
-    "publishTime": "..."
-  },
-  "subscription": "projects/.../subscriptions/..."
-}
-```
-
-### Step 6: Server — Wire Up in main.go
-
-**File:** `cmd/server/main.go`
-
-Currently only Stripe is wired. Change to support multiple providers:
-
-```go
-var billingProvider billing.Provider
-var googleProvider *billing.GoogleProvider
-
-if cfg.Billing.Enabled() {
-    billingProvider = billing.NewStripeProvider(...)
-} else {
-    billingProvider = billing.NewNoopProvider()
-}
-
-if cfg.Billing.GoogleServiceAcctPath != "" {
-    gp, err := billing.NewGoogleProvider(
-        cfg.Billing.GoogleServiceAcctPath,
-        cfg.Billing.GooglePackageName,   // new config field
-        subRepo,
-    )
-    if err != nil {
-        log.Fatal().Err(err).Msg("failed to init Google provider")
-    }
-    googleProvider = gp
-}
-```
-
-The webhook handler needs access to the Google provider specifically, since the `Provider` interface routes all webhooks through a single provider. Consider either:
-- **Option A:** Add a provider registry (`map[string]billing.Provider`) to `BillingService`
-- **Option B:** Pass `googleProvider` directly to `BillingHandler` for the verify endpoint
-
-### Step 7: Server — Config
-
-**File:** `internal/config/config.go`
-
-Add to `BillingConfig`:
-
-```go
-GooglePackageName string `envconfig:"GOOGLE_PACKAGE_NAME"`
-```
-
-**File:** `.env.example`
-
-```
-GOOGLE_SERVICE_ACCOUNT_PATH=
+```env
+GOOGLE_SERVICE_ACCOUNT_PATH=/etc/shellvault/google-sa.json
 GOOGLE_PACKAGE_NAME=de.kiefernetworks.shellvault
 ```
 
-### Step 8: Client — Subscription Purchase Flow
+The server will automatically enable Google Play billing when both variables are set. Check the startup logs for:
 
-**File:** `lib/features/account/presentation/providers/subscription_purchase_provider.dart` (new)
-
-Create a Riverpod provider that:
-1. Loads the subscription product via `InAppPurchase.instance.queryProductDetails({'shellvault_sync_monthly'})`
-2. Initiates purchase via `InAppPurchase.instance.buyNonConsumable(purchaseParam)`
-3. Listens to the purchase stream
-4. On `PurchaseStatus.purchased`: sends `purchaseToken` + `productId` to `POST /v1/billing/verify-google`
-5. On success: invalidates `billingStatusProvider` to refresh UI
-
-### Step 9: Client — API Call
-
-**File:** `lib/features/account/data/repositories/account_repository_impl.dart`
-
-Add method:
-
-```dart
-Future<Result<BillingStatus>> verifyGooglePurchase({
-  required String purchaseToken,
-  required String productId,
-}) async {
-  final response = await _api.post('/v1/billing/verify-google', data: {
-    'purchase_token': purchaseToken,
-    'product_id': productId,
-  });
-  return Result.success(BillingStatus.fromJson(response.data));
-}
+```
+Google Play billing enabled
 ```
 
-### Step 10: Client — UI Integration
+## 7. Testing
 
-**File:** `lib/features/settings/presentation/screens/account_sync_screen.dart`
+### License Testing
 
-On Android (when `isNativeIapPlatform && Platform.isAndroid`):
-- Replace the Stripe checkout flow with the IAP purchase flow
-- "Activate Sync" button triggers the subscription purchase provider
-- After purchase, poll `billingStatusProvider` (existing logic)
+1. Open [Google Play Console](https://play.google.com/console) → **Settings** → **License testing**
+2. Add Google accounts for testing (these accounts can make free test purchases)
 
-### Step 11: CLI — billing sync for Google
+### Internal Test Track
 
-**File:** `cmd/cli/billing.go`
+1. Upload your APK/AAB to the **Internal testing** track
+2. Add testers via email list
+3. Testers install via the Play Store opt-in link
 
-In `billingSyncCmd`, add Google reconciliation:
+### Verify End-to-End
 
-```go
-if googleProvider != nil && googleCount > 0 {
-    // For each active Google sub, verify via API
-    // Similar to reconcileStripe but using GoogleProvider.VerifyPurchase
-}
-```
+1. Install from internal test track
+2. Purchase subscription with a license testing account
+3. Check server logs for `google purchase verification` messages
+4. Run `shellvault-cli billing sync` to verify reconciliation
+5. Cancel via [Google Play subscriptions](https://play.google.com/store/account/subscriptions) → check webhook processing
 
-## Environment Variables
+Reference: [Test in-app billing](https://developer.android.com/google/play/billing/test)
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_SERVICE_ACCOUNT_PATH` | Yes | Path to Google Cloud service account JSON |
-| `GOOGLE_PACKAGE_NAME` | Yes | Android package name (`de.kiefernetworks.shellvault`) |
+## Environment Variables Reference
 
-## Testing
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_SERVICE_ACCOUNT_PATH` | Path to Google Cloud service account JSON key |
+| `GOOGLE_PACKAGE_NAME` | Android package name (e.g. `de.kiefernetworks.shellvault`) |
 
-### Server
+## API Endpoints
 
-1. Unit test `GoogleProvider.VerifyPurchase` with mocked HTTP transport
-2. Test webhook payload parsing with sample RTDN messages
-3. Test subscription state mapping for all notification types
-4. Integration test: verify endpoint creates/updates subscription
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `POST /v1/billing/verify-google` | JWT | Client sends `{ "purchase_token": "..." }`, server verifies with Google API |
+| `POST /v1/webhooks/google` | Public | Cloud Pub/Sub push endpoint for RTDN |
+| `GET /v1/billing/status` | JWT | Returns subscription status (works for all providers) |
 
-### Client
+## Client Product ID
 
-1. Test purchase flow on a physical Android device (IAP does not work on emulators)
-2. Use Google Play Console test tracks (internal/closed) for testing
-3. Test license testing accounts for free test purchases
-4. Verify polling picks up the activated subscription after verification
-
-### End-to-End
-
-1. Install app from internal test track
-2. Purchase subscription with test account
-3. Verify server receives purchase token and activates subscription
-4. Verify RTDN webhook fires on renewal/cancellation
-5. Cancel via Google Play > verify server updates status
-6. Run `billing sync` > verify Google subs are checked
-
-## File Summary
-
-### Server Changes
-
-| File | Change |
-|------|--------|
-| `internal/billing/google.go` | Full implementation with Android Publisher API |
-| `internal/config/config.go` | Add `GOOGLE_PACKAGE_NAME` |
-| `cmd/server/main.go` | Instantiate `GoogleProvider`, wire to handler |
-| `internal/handler/billing_handler.go` | New `VerifyGoogle` endpoint |
-| `internal/service/billing_service.go` | Provider registry or direct Google provider access |
-| `cmd/cli/billing.go` | Google sync in `billing sync` |
-| `go.mod` | Add `google.golang.org/api` dependency |
-| `.env.example` | Add `GOOGLE_PACKAGE_NAME` |
-
-### Client Changes
-
-| File | Change |
-|------|--------|
-| `lib/features/account/data/repositories/account_repository_impl.dart` | `verifyGooglePurchase()` API call |
-| `lib/features/account/domain/repositories/account_repository.dart` | Interface method |
-| `lib/features/account/presentation/providers/` | New subscription purchase provider |
-| `lib/features/settings/presentation/screens/account_sync_screen.dart` | Android IAP flow |
-| `lib/features/sync/presentation/screens/sync_settings_screen.dart` | Same IAP flow |
+The Flutter app uses the product ID `shellvault_sync_yearly` (defined in `subscription_purchase_provider.dart`). Make sure the Google Play Console subscription matches this ID exactly.

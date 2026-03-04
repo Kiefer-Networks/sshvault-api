@@ -11,9 +11,10 @@ import (
 )
 
 type BillingService struct {
-	subRepo  repository.SubscriptionRepository
-	provider billing.Provider
-	enabled  bool
+	subRepo        repository.SubscriptionRepository
+	provider       billing.Provider
+	googleProvider *billing.GoogleProvider
+	enabled        bool
 }
 
 func NewBillingService(subRepo repository.SubscriptionRepository, provider billing.Provider, enabled bool) *BillingService {
@@ -22,6 +23,14 @@ func NewBillingService(subRepo repository.SubscriptionRepository, provider billi
 		provider: provider,
 		enabled:  enabled,
 	}
+}
+
+func (s *BillingService) SetGoogleProvider(gp *billing.GoogleProvider) {
+	s.googleProvider = gp
+}
+
+func (s *BillingService) GoogleProvider() *billing.GoogleProvider {
+	return s.googleProvider
 }
 
 type BillingStatus struct {
@@ -74,7 +83,15 @@ func (s *BillingService) CreatePortalSession(ctx context.Context, userID uuid.UU
 }
 
 func (s *BillingService) HandleWebhook(ctx context.Context, provider, payload string, signature string) error {
-	return s.provider.HandleWebhook(ctx, payload, signature)
+	switch provider {
+	case "google":
+		if s.googleProvider != nil {
+			return s.googleProvider.HandleWebhook(ctx, payload, signature)
+		}
+		return fmt.Errorf("google provider not configured")
+	default:
+		return s.provider.HandleWebhook(ctx, payload, signature)
+	}
 }
 
 func (s *BillingService) IsActive(ctx context.Context, userID uuid.UUID) bool {

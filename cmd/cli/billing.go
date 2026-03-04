@@ -11,6 +11,7 @@ import (
 
 	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/config"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
 func billingCmd() *cobra.Command {
@@ -268,22 +269,111 @@ func billingSyncCmd() *cobra.Command {
 				fmt.Println("Stripe: skipped (STRIPE_SECRET_KEY not set)")
 			}
 
-			// Apple/Google: warn
-			var appleCount, googleCount int
+			// Google sync
+			if cfg.Billing.GoogleServiceAcctPath != "" && cfg.Billing.GooglePackageName != "" {
+				fmt.Println("Syncing Google Play subscriptions...")
+				checked, corrected, syncErr := reconcileGoogle(ctx, cfg)
+				if syncErr != nil {
+					fmt.Fprintf(os.Stderr, "  Google sync error: %v\n", syncErr)
+				} else {
+					fmt.Printf("  Checked: %d, Corrected: %d\n\n", checked, corrected)
+				}
+			} else {
+				var googleCount int
+				_ = pool.QueryRow(ctx,
+					`SELECT COUNT(*) FROM subscriptions WHERE provider = 'google' AND status = 'active'`).Scan(&googleCount)
+				if googleCount > 0 {
+					fmt.Printf("Google: %d active subscription(s) — GOOGLE_SERVICE_ACCOUNT_PATH / GOOGLE_PACKAGE_NAME not set\n", googleCount)
+				}
+			}
+
+			// Apple: warn
+			var appleCount int
 			_ = pool.QueryRow(ctx,
 				`SELECT COUNT(*) FROM subscriptions WHERE provider = 'apple' AND status = 'active'`).Scan(&appleCount)
-			_ = pool.QueryRow(ctx,
-				`SELECT COUNT(*) FROM subscriptions WHERE provider = 'google' AND status = 'active'`).Scan(&googleCount)
-
 			if appleCount > 0 {
 				fmt.Printf("Apple: %d active subscription(s) — verification not yet implemented\n", appleCount)
-			}
-			if googleCount > 0 {
-				fmt.Printf("Google: %d active subscription(s) — verification not yet implemented\n", googleCount)
 			}
 
 			fmt.Println("\nSync complete.")
 			return nil
 		},
 	}
+}
+
+// reconcileGoogle verifies all active Google subscriptions against the
+// Google Play Developer API and corrects stale statuses in the database.
+func reconcileGoogle(ctx context.Context, cfg *config.Config) (checked, corrected int, err error) {
+	subRepo := repository.NewSubscriptionRepository(pool)
+
+	gp, err := billing.NewGoogleProvider(
+		cfg.Billing.GoogleServiceAcctPath,
+		cfg.Billing.GooglePackageName,
+		subRepo,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("init google provider: %w", err)
+	}
+
+	rows, err := pool.Query(ctx,
+		`SELECT id, provider_sub_id, status FROM subscriptions
+		 WHERE provider = 'google' AND status IN ('active', 'past_due')`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	type sub struct {
+		id            uuid.UUID
+		purchaseToken string
+		status        string
+	}
+	var subs []sub
+	for rows.Next() {
+		var s sub
+		if err := rows.Scan(&s.id, &s.purchaseToken, &s.status); err != nil {
+			continue
+		}
+		subs = append(subs, s)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterating rows: %w", err)
+	}
+
+	for _, s := range subs {
+		checked++
+		googleSub, err := gp.VerifyPurchase(ctx, s.purchaseToken)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to verify %s: %v\n", s.id, err)
+			continue
+		}
+
+		// Map Google state to our status
+		var newStatus string
+		switch googleSub.SubscriptionState {
+		case "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD":
+			newStatus = "active"
+		case "SUBSCRIPTION_STATE_CANCELED", "SUBSCRIPTION_STATE_PAUSED":
+			newStatus = "canceled"
+		case "SUBSCRIPTION_STATE_ON_HOLD":
+			newStatus = "past_due"
+		case "SUBSCRIPTION_STATE_EXPIRED":
+			newStatus = "expired"
+		default:
+			newStatus = "canceled"
+		}
+
+		if newStatus != s.status {
+			if _, err := pool.Exec(ctx,
+				`UPDATE subscriptions SET status = $1, updated_at = now() WHERE id = $2`,
+				newStatus, s.id); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: failed to update %s: %v\n", s.id, err)
+				continue
+			}
+			fmt.Printf("  corrected %s: %s → %s\n", s.id, s.status, newStatus)
+			corrected++
+		}
+	}
+
+	return checked, corrected, nil
 }

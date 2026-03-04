@@ -49,11 +49,12 @@ type SMTPConfig struct {
 }
 
 type BillingConfig struct {
-	StripeSecretKey        string `envconfig:"STRIPE_SECRET_KEY"`
-	StripeWebhookSecret    string `envconfig:"STRIPE_WEBHOOK_SECRET"`
-	StripePriceID          string `envconfig:"STRIPE_PRICE_ID"`
-	AppleSharedSecret      string `envconfig:"APPLE_SHARED_SECRET"`
-	GoogleServiceAcctPath  string `envconfig:"GOOGLE_SERVICE_ACCOUNT_PATH"`
+	StripeSecretKey       string `envconfig:"STRIPE_SECRET_KEY"`
+	StripeWebhookSecret   string `envconfig:"STRIPE_WEBHOOK_SECRET"`
+	StripePriceID         string `envconfig:"STRIPE_PRICE_ID"`
+	AppleSharedSecret     string `envconfig:"APPLE_SHARED_SECRET"`
+	GoogleServiceAcctPath string `envconfig:"GOOGLE_SERVICE_ACCOUNT_PATH"`
+	GooglePackageName     string `envconfig:"GOOGLE_PACKAGE_NAME"`
 }
 
 type VaultConfig struct {

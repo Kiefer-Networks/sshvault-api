@@ -261,6 +261,21 @@ func main() {
 	userService := service.NewUserService(userRepo, tokenRepo, subRepo, billingProvider, transactor)
 	billingService := service.NewBillingService(subRepo, billingProvider, billingEnabled)
 
+	// Google Play provider (optional, independent of Stripe)
+	if cfg.Billing.GoogleServiceAcctPath != "" && cfg.Billing.GooglePackageName != "" {
+		googleProvider, err := billing.NewGoogleProvider(
+			cfg.Billing.GoogleServiceAcctPath,
+			cfg.Billing.GooglePackageName,
+			subRepo,
+		)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to init Google Play provider, Google billing disabled")
+		} else {
+			billingService.SetGoogleProvider(googleProvider)
+			log.Info().Msg("Google Play billing enabled")
+		}
+	}
+
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
 	authHandler := handler.NewAuthHandler(authService, auditLogger)
@@ -374,6 +389,7 @@ func main() {
 			r.Get("/billing/status", billingHandler.GetStatus)
 			r.Post("/billing/checkout", billingHandler.CreateCheckout)
 			r.Post("/billing/portal", billingHandler.CreatePortal)
+			r.Post("/billing/verify-google", billingHandler.VerifyGoogle)
 		})
 
 		// Billing pages (public, shown after Stripe redirect)

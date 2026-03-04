@@ -479,11 +479,58 @@ paths:
         "200":
           description: Webhook processed
 
+  /v1/billing/verify-google:
+    post:
+      tags: [Billing]
+      summary: Verify Google Play purchase and activate subscription
+      operationId: verifyGooglePurchase
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purchase_token]
+              properties:
+                purchase_token:
+                  type: string
+                  description: Google Play purchase token from in-app purchase
+      responses:
+        "200":
+          description: Purchase verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                  provider:
+                    type: string
+                    example: google
+                  status:
+                    type: string
+                    example: active
+        "400":
+          description: Missing purchase_token
+        "502":
+          description: Google Play verification failed
+        "503":
+          description: Google Play billing not configured
+
   /v1/webhooks/google:
     post:
       tags: [Billing]
-      summary: Google Play webhook
+      summary: Google Play RTDN webhook (via Cloud Pub/Sub push)
       operationId: googleWebhook
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Cloud Pub/Sub push message envelope
       responses:
         "200":
           description: Webhook processed

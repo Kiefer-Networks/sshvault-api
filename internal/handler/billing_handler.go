@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -137,6 +138,45 @@ func (h *BillingHandler) GoogleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *BillingHandler) VerifyGoogle(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	gp := h.billingService.GoogleProvider()
+	if gp == nil {
+		respondError(w, http.StatusServiceUnavailable, "Google Play billing not configured")
+		return
+	}
+
+	var req struct {
+		PurchaseToken string `json:"purchase_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PurchaseToken == "" {
+		respondError(w, http.StatusBadRequest, "purchase_token required")
+		return
+	}
+
+	sub, err := gp.VerifyAndUpsert(r.Context(), userID, req.PurchaseToken)
+	if err != nil {
+		log.Warn().Err(err).Str("user_id", userID.String()).Msg("google purchase verification failed")
+		respondError(w, http.StatusBadGateway, "purchase verification failed")
+		return
+	}
+
+	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActCheckout).
+		Detail("provider", "google").
+		Detail("status", sub.Status).
+		Send()
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"active":   sub.Status == "active",
+		"provider": "google",
+		"status":   sub.Status,
+	})
 }
 
 func (h *BillingHandler) SuccessPage(w http.ResponseWriter, r *http.Request) {
