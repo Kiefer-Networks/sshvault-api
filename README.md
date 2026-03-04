@@ -173,14 +173,15 @@ make build-cli
 | `billing info <email-or-id>` | Show subscription history |
 | `billing set <email-or-id> [--provider] [--status] [--days]` | Create or update subscription |
 | `billing revoke <email-or-id>` | Cancel all subscriptions |
+| `billing sync` | Reconcile active subscriptions against provider APIs |
 
 #### Database Backup
 
 | Command | Description |
 |---|---|
-| `backup create [-o DIR]` | Create compressed database backup |
+| `backup create [-o DIR]` | Create compressed database backup + manifest |
 | `backup list` | List available backups |
-| `backup restore <file>` | Restore database from backup (interactive confirmation) |
+| `backup restore <file> [--no-reconcile]` | Restore database with post-restore reconciliation |
 | `backup auto` | Start backup daemon (reads interval from ENV) |
 
 ## Reverse Proxy Setup
@@ -390,6 +391,14 @@ For self-hosted instances:
 - `Referrer-Policy: no-referrer`
 - `Cache-Control: no-store`
 - `Permissions-Policy` disables camera, microphone, geolocation, Topics API
+
+## Documentation
+
+Detailed integration guides are available in the [`docs/`](docs/) directory:
+
+| Document | Description |
+|----------|-------------|
+| [Google Play Integration](docs/google-play-integration.md) | Full implementation guide for Google Play Billing |
 
 ## License
 
