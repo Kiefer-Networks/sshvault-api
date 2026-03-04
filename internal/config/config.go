@@ -52,7 +52,11 @@ type BillingConfig struct {
 	StripeSecretKey       string `envconfig:"STRIPE_SECRET_KEY"`
 	StripeWebhookSecret   string `envconfig:"STRIPE_WEBHOOK_SECRET"`
 	StripePriceID         string `envconfig:"STRIPE_PRICE_ID"`
-	AppleSharedSecret     string `envconfig:"APPLE_SHARED_SECRET"`
+	AppleKeyPath          string `envconfig:"APPLE_KEY_PATH"`
+	AppleKeyID            string `envconfig:"APPLE_KEY_ID"`
+	AppleIssuerID         string `envconfig:"APPLE_ISSUER_ID"`
+	AppleBundleID         string `envconfig:"APPLE_BUNDLE_ID"`
+	AppleEnvironment      string `envconfig:"APPLE_ENVIRONMENT" default:"production"`
 	GoogleServiceAcctPath string `envconfig:"GOOGLE_SERVICE_ACCOUNT_PATH"`
 	GooglePackageName     string `envconfig:"GOOGLE_PACKAGE_NAME"`
 }

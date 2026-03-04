@@ -14,6 +14,7 @@ type BillingService struct {
 	subRepo        repository.SubscriptionRepository
 	provider       billing.Provider
 	googleProvider *billing.GoogleProvider
+	appleProvider  *billing.AppleProvider
 	enabled        bool
 }
 
@@ -31,6 +32,14 @@ func (s *BillingService) SetGoogleProvider(gp *billing.GoogleProvider) {
 
 func (s *BillingService) GoogleProvider() *billing.GoogleProvider {
 	return s.googleProvider
+}
+
+func (s *BillingService) SetAppleProvider(ap *billing.AppleProvider) {
+	s.appleProvider = ap
+}
+
+func (s *BillingService) AppleProvider() *billing.AppleProvider {
+	return s.appleProvider
 }
 
 type BillingStatus struct {
@@ -89,6 +98,11 @@ func (s *BillingService) HandleWebhook(ctx context.Context, provider, payload st
 			return s.googleProvider.HandleWebhook(ctx, payload, signature)
 		}
 		return fmt.Errorf("google provider not configured")
+	case "apple":
+		if s.appleProvider != nil {
+			return s.appleProvider.HandleWebhook(ctx, payload, signature)
+		}
+		return fmt.Errorf("apple provider not configured")
 	default:
 		return s.provider.HandleWebhook(ctx, payload, signature)
 	}

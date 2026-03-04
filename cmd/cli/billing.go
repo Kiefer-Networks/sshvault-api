@@ -287,17 +287,109 @@ func billingSyncCmd() *cobra.Command {
 				}
 			}
 
-			// Apple: warn
-			var appleCount int
-			_ = pool.QueryRow(ctx,
-				`SELECT COUNT(*) FROM subscriptions WHERE provider = 'apple' AND status = 'active'`).Scan(&appleCount)
-			if appleCount > 0 {
-				fmt.Printf("Apple: %d active subscription(s) — verification not yet implemented\n", appleCount)
+			// Apple sync
+			if cfg.Billing.AppleKeyPath != "" && cfg.Billing.AppleKeyID != "" &&
+				cfg.Billing.AppleIssuerID != "" && cfg.Billing.AppleBundleID != "" {
+				fmt.Println("Syncing Apple subscriptions...")
+				checked, corrected, syncErr := reconcileApple(ctx, cfg)
+				if syncErr != nil {
+					fmt.Fprintf(os.Stderr, "  Apple sync error: %v\n", syncErr)
+				} else {
+					fmt.Printf("  Checked: %d, Corrected: %d\n\n", checked, corrected)
+				}
+			} else {
+				var appleCount int
+				_ = pool.QueryRow(ctx,
+					`SELECT COUNT(*) FROM subscriptions WHERE provider = 'apple' AND status = 'active'`).Scan(&appleCount)
+				if appleCount > 0 {
+					fmt.Printf("Apple: %d active subscription(s) — APPLE_KEY_PATH / APPLE_KEY_ID not set\n", appleCount)
+				}
 			}
 
 			fmt.Println("\nSync complete.")
 			return nil
 		},
+	}
+}
+
+// reconcileApple verifies all active Apple subscriptions against the
+// App Store Server API and corrects stale statuses in the database.
+func reconcileApple(ctx context.Context, cfg *config.Config) (checked, corrected int, err error) {
+	subRepo := repository.NewSubscriptionRepository(pool)
+
+	ap, err := billing.NewAppleProvider(
+		cfg.Billing.AppleKeyPath,
+		cfg.Billing.AppleKeyID,
+		cfg.Billing.AppleIssuerID,
+		cfg.Billing.AppleBundleID,
+		cfg.Billing.AppleEnvironment,
+		subRepo,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("init apple provider: %w", err)
+	}
+
+	rows, err := pool.Query(ctx,
+		`SELECT id, provider_sub_id, status FROM subscriptions
+		 WHERE provider = 'apple' AND status IN ('active', 'past_due')`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	type sub struct {
+		id            uuid.UUID
+		transactionID string
+		status        string
+	}
+	var subs []sub
+	for rows.Next() {
+		var s sub
+		if err := rows.Scan(&s.id, &s.transactionID, &s.status); err != nil {
+			continue
+		}
+		subs = append(subs, s)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterating rows: %w", err)
+	}
+
+	for _, s := range subs {
+		checked++
+		info, err := ap.VerifyPurchase(ctx, s.transactionID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to verify %s: %v\n", s.id, err)
+			continue
+		}
+
+		newStatus := mapAppleStatusForSync(info.Status)
+		if newStatus != s.status {
+			if _, err := pool.Exec(ctx,
+				`UPDATE subscriptions SET status = $1, updated_at = now() WHERE id = $2`,
+				newStatus, s.id); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: failed to update %s: %v\n", s.id, err)
+				continue
+			}
+			fmt.Printf("  corrected %s: %s → %s\n", s.id, s.status, newStatus)
+			corrected++
+		}
+	}
+
+	return checked, corrected, nil
+}
+
+func mapAppleStatusForSync(status int) string {
+	switch status {
+	case 1, 4: // Active, Grace Period
+		return "active"
+	case 2: // Expired
+		return "expired"
+	case 3: // Billing Retry
+		return "past_due"
+	case 5: // Revoked
+		return "canceled"
+	default:
+		return "canceled"
 	}
 }
 

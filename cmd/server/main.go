@@ -276,6 +276,25 @@ func main() {
 		}
 	}
 
+	// Apple App Store provider (optional, independent of Stripe)
+	if cfg.Billing.AppleKeyPath != "" && cfg.Billing.AppleKeyID != "" &&
+		cfg.Billing.AppleIssuerID != "" && cfg.Billing.AppleBundleID != "" {
+		appleProvider, err := billing.NewAppleProvider(
+			cfg.Billing.AppleKeyPath,
+			cfg.Billing.AppleKeyID,
+			cfg.Billing.AppleIssuerID,
+			cfg.Billing.AppleBundleID,
+			cfg.Billing.AppleEnvironment,
+			subRepo,
+		)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to init Apple provider, Apple billing disabled")
+		} else {
+			billingService.SetAppleProvider(appleProvider)
+			log.Info().Msg("Apple App Store billing enabled")
+		}
+	}
+
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
 	authHandler := handler.NewAuthHandler(authService, auditLogger)
@@ -390,6 +409,7 @@ func main() {
 			r.Post("/billing/checkout", billingHandler.CreateCheckout)
 			r.Post("/billing/portal", billingHandler.CreatePortal)
 			r.Post("/billing/verify-google", billingHandler.VerifyGoogle)
+			r.Post("/billing/verify-apple", billingHandler.VerifyApple)
 		})
 
 		// Billing pages (public, shown after Stripe redirect)

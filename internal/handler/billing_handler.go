@@ -179,6 +179,45 @@ func (h *BillingHandler) VerifyGoogle(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *BillingHandler) VerifyApple(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	ap := h.billingService.AppleProvider()
+	if ap == nil {
+		respondError(w, http.StatusServiceUnavailable, "Apple billing not configured")
+		return
+	}
+
+	var req struct {
+		TransactionID string `json:"transaction_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TransactionID == "" {
+		respondError(w, http.StatusBadRequest, "transaction_id required")
+		return
+	}
+
+	sub, err := ap.VerifyAndUpsert(r.Context(), userID, req.TransactionID)
+	if err != nil {
+		log.Warn().Err(err).Str("user_id", userID.String()).Msg("apple purchase verification failed")
+		respondError(w, http.StatusBadGateway, "purchase verification failed")
+		return
+	}
+
+	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActCheckout).
+		Detail("provider", "apple").
+		Detail("status", sub.Status).
+		Send()
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"active":   sub.Status == "active",
+		"provider": "apple",
+		"status":   sub.Status,
+	})
+}
+
 func (h *BillingHandler) SuccessPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")

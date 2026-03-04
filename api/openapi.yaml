@@ -520,6 +520,47 @@ paths:
         "503":
           description: Google Play billing not configured
 
+  /v1/billing/verify-apple:
+    post:
+      tags: [Billing]
+      summary: Verify Apple App Store purchase and activate subscription
+      operationId: verifyApplePurchase
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transaction_id]
+              properties:
+                transaction_id:
+                  type: string
+                  description: Apple original transaction ID from in-app purchase
+      responses:
+        "200":
+          description: Purchase verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                  provider:
+                    type: string
+                    example: apple
+                  status:
+                    type: string
+                    example: active
+        "400":
+          description: Missing transaction_id
+        "502":
+          description: Apple verification failed
+        "503":
+          description: Apple billing not configured
+
   /v1/webhooks/google:
     post:
       tags: [Billing]
