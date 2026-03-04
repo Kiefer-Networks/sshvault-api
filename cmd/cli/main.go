@@ -69,6 +69,11 @@ func userCmd() *cobra.Command {
 	cmd.AddCommand(userDeleteCmd())
 	cmd.AddCommand(userDeactivateCmd())
 	cmd.AddCommand(userActivateCmd())
+	cmd.AddCommand(userLogoutCmd())
+	cmd.AddCommand(userDevicesCmd())
+	cmd.AddCommand(userDeleteDeviceCmd())
+	cmd.AddCommand(userAuditCmd())
+	cmd.AddCommand(userResetVaultCmd())
 
 	return cmd
 }
@@ -341,6 +346,208 @@ func userActivateCmd() *cobra.Command {
 			}
 
 			fmt.Printf("User %s reactivated.\n", email)
+			return nil
+		},
+	}
+}
+
+func userLogoutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout <email-or-id>",
+		Short: "Revoke all sessions for a user (without deactivating)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			user, err := findUser(ctx, args[0])
+			if err != nil {
+				return err
+			}
+
+			result, err := pool.Exec(ctx,
+				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE`, user.id)
+			if err != nil {
+				return fmt.Errorf("revoking tokens: %w", err)
+			}
+
+			fmt.Printf("Revoked %d session(s) for %s. User remains active.\n",
+				result.RowsAffected(), user.email)
+			return nil
+		},
+	}
+}
+
+func userDevicesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "devices <email-or-id>",
+		Short: "List devices for a user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			user, err := findUser(ctx, args[0])
+			if err != nil {
+				return err
+			}
+
+			rows, err := pool.Query(ctx,
+				`SELECT id, name, platform, last_sync, created_at FROM devices WHERE user_id = $1 ORDER BY created_at DESC`,
+				user.id)
+			if err != nil {
+				return fmt.Errorf("query: %w", err)
+			}
+			defer rows.Close()
+
+			fmt.Printf("Devices for: %s (%s)\n\n", user.email, user.id)
+			fmt.Printf("%-36s  %-20s  %-10s  %-20s  %s\n",
+				"ID", "NAME", "PLATFORM", "LAST SYNC", "REGISTERED")
+			fmt.Println(strings.Repeat("─", 120))
+
+			count := 0
+			for rows.Next() {
+				var id uuid.UUID
+				var name, platform string
+				var lastSync *time.Time
+				var createdAt time.Time
+				if err := rows.Scan(&id, &name, &platform, &lastSync, &createdAt); err != nil {
+					continue
+				}
+				syncStr := "never"
+				if lastSync != nil {
+					syncStr = lastSync.Format("2006-01-02 15:04")
+				}
+				fmt.Printf("%-36s  %-20s  %-10s  %-20s  %s\n",
+					id, truncate(name, 20), platform, syncStr,
+					createdAt.Format("2006-01-02 15:04"))
+				count++
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating rows: %w", err)
+			}
+			if count == 0 {
+				fmt.Println("  No devices registered.")
+			} else {
+				fmt.Printf("\nTotal: %d device(s)\n", count)
+			}
+			return nil
+		},
+	}
+}
+
+func userDeleteDeviceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete-device <email-or-id> <device-id>",
+		Short: "Remove a device from a user",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			user, err := findUser(ctx, args[0])
+			if err != nil {
+				return err
+			}
+
+			deviceID := args[1]
+			result, err := pool.Exec(ctx,
+				`DELETE FROM devices WHERE id = $1 AND user_id = $2`, deviceID, user.id)
+			if err != nil {
+				return fmt.Errorf("deleting device: %w", err)
+			}
+			if result.RowsAffected() == 0 {
+				return fmt.Errorf("device %s not found for user %s", deviceID, user.email)
+			}
+
+			fmt.Printf("Device %s removed from user %s.\n", deviceID, user.email)
+			return nil
+		},
+	}
+}
+
+func userAuditCmd() *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "audit <email-or-id>",
+		Short: "Show audit log for a user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			user, err := findUser(ctx, args[0])
+			if err != nil {
+				return err
+			}
+
+			rows, err := pool.Query(ctx,
+				`SELECT category, action, details, created_at FROM audit_logs
+				 WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+				user.id, limit)
+			if err != nil {
+				return fmt.Errorf("query: %w", err)
+			}
+			defer rows.Close()
+
+			fmt.Printf("Audit log for: %s (%s)\n\n", user.email, user.id)
+			fmt.Printf("%-20s  %-25s  %-30s  %s\n",
+				"TIMESTAMP", "CATEGORY", "ACTION", "DETAILS")
+			fmt.Println(strings.Repeat("─", 110))
+
+			count := 0
+			for rows.Next() {
+				var category, action string
+				var details *string
+				var createdAt time.Time
+				if err := rows.Scan(&category, &action, &details, &createdAt); err != nil {
+					continue
+				}
+				detailStr := ""
+				if details != nil {
+					detailStr = truncate(*details, 30)
+				}
+				fmt.Printf("%-20s  %-25s  %-30s  %s\n",
+					createdAt.Format("2006-01-02 15:04:05"),
+					category, action, detailStr)
+				count++
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating rows: %w", err)
+			}
+			if count == 0 {
+				fmt.Println("  No audit entries found.")
+			} else {
+				fmt.Printf("\nShowing %d of last %d entries.\n", count, limit)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Number of entries to show")
+	return cmd
+}
+
+func userResetVaultCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reset-vault <email-or-id>",
+		Short: "Delete a user's encrypted vault (irreversible)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			user, err := findUser(ctx, args[0])
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("DELETE vault for %s? This removes all encrypted data and history!\n", user.email)
+			if !confirm() {
+				fmt.Println("Aborted.")
+				return nil
+			}
+
+			_, _ = pool.Exec(ctx, `DELETE FROM vault_history WHERE user_id = $1`, user.id)
+			result, err := pool.Exec(ctx, `DELETE FROM vaults WHERE user_id = $1`, user.id)
+			if err != nil {
+				return fmt.Errorf("deleting vault: %w", err)
+			}
+
+			if result.RowsAffected() == 0 {
+				fmt.Printf("No vault found for %s.\n", user.email)
+			} else {
+				fmt.Printf("Vault deleted for %s (including history).\n", user.email)
+			}
 			return nil
 		},
 	}

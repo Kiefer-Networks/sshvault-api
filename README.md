@@ -12,15 +12,15 @@ ShellVault uses a Zero-Knowledge architecture: the server never sees plaintext d
 
 - **Encrypted Blob Sync** with optimistic locking and version history
 - **Ed25519 JWT authentication** with refresh token rotation
-- **OAuth** (Apple Sign-In, Google Sign-In)
 - **Billing** via Stripe, Apple App Store, Google Play
 - **Self-Hosted friendly** — billing disabled when Stripe keys are absent
+- **Admin CLI** for user management, billing, and database backups
 
 ## Quick Start
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.25+
 - PostgreSQL 16+
 - Docker & Docker Compose (optional)
 - A reverse proxy (Traefik or Caddy) for TLS termination
@@ -89,6 +89,99 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recrea
 ```
 
 > **Note:** `SERVER_ADDR` must be set to `0.0.0.0:8080` inside Docker containers. The port mapping in `docker-compose.yml` (`127.0.0.1:8080:8080`) ensures the server is only reachable via localhost on the host. A reverse proxy is **required** for TLS termination — see [Reverse Proxy Setup](#reverse-proxy-setup) below.
+
+## CLI Tool
+
+The `shellvault-cli` binary is included in the Docker image and provides admin commands for user management, billing, and database backups.
+
+### Using the CLI in Docker
+
+Run CLI commands via `docker compose exec` against the running server container:
+
+```bash
+# Shorthand (set once)
+COMPOSE="docker compose --env-file .env -f docker/docker-compose.yml"
+
+# User management
+$COMPOSE exec server ./shellvault-cli user list
+$COMPOSE exec server ./shellvault-cli user list --all        # include deleted
+$COMPOSE exec server ./shellvault-cli user info user@example.com
+$COMPOSE exec server ./shellvault-cli user deactivate user@example.com
+$COMPOSE exec server ./shellvault-cli user activate user@example.com
+$COMPOSE exec server ./shellvault-cli user delete user@example.com
+$COMPOSE exec server ./shellvault-cli user delete user@example.com --hard
+
+# Billing / subscriptions
+$COMPOSE exec server ./shellvault-cli billing info user@example.com
+$COMPOSE exec server ./shellvault-cli billing set user@example.com --days 365
+$COMPOSE exec server ./shellvault-cli billing set user@example.com --provider stripe --status active --days 30
+$COMPOSE exec server ./shellvault-cli billing revoke user@example.com
+
+# Database backups (manual)
+$COMPOSE exec server ./shellvault-cli backup create
+$COMPOSE exec server ./shellvault-cli backup list
+$COMPOSE exec server ./shellvault-cli backup restore /app/backups/shellvault_20260304_120000.sql.gz
+```
+
+### Automatic Backups
+
+The `docker-compose.yml` includes a dedicated `backup` service that runs `shellvault-cli backup auto` as a daemon. It creates compressed pg_dump backups on a configurable interval and prunes old backups automatically.
+
+Configure via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKUP_DIR` | `/app/backups` | Backup storage directory |
+| `BACKUP_INTERVAL` | `24h` | Time between backups |
+| `BACKUP_RETENTION` | `7` | Number of backups to keep |
+
+The backup service starts automatically with `docker compose up -d`. To check its status:
+
+```bash
+$COMPOSE logs -f backup
+```
+
+### Local Development (without Docker)
+
+```bash
+make build-cli
+./bin/shellvault-cli user list
+./bin/shellvault-cli backup create -o ./backups
+```
+
+### CLI Command Reference
+
+#### User Management
+
+| Command | Description |
+|---|---|
+| `user list [--all]` | List users (optionally include deleted) |
+| `user info <email-or-id>` | Show user profile, subscription, vault, devices |
+| `user delete <email-or-id> [--hard]` | Soft delete (default) or permanent delete with CASCADE |
+| `user deactivate <email-or-id>` | Soft delete + revoke all sessions |
+| `user activate <email-or-id>` | Reactivate a deactivated user |
+| `user logout <email-or-id>` | Revoke all sessions without deactivating |
+| `user devices <email-or-id>` | List registered devices |
+| `user delete-device <email-or-id> <device-id>` | Remove a specific device |
+| `user audit <email-or-id> [-n LIMIT]` | Show audit log (default: last 50 entries) |
+| `user reset-vault <email-or-id>` | Delete user's encrypted vault and history |
+
+#### Billing
+
+| Command | Description |
+|---|---|
+| `billing info <email-or-id>` | Show subscription history |
+| `billing set <email-or-id> [--provider] [--status] [--days]` | Create or update subscription |
+| `billing revoke <email-or-id>` | Cancel all subscriptions |
+
+#### Database Backup
+
+| Command | Description |
+|---|---|
+| `backup create [-o DIR]` | Create compressed database backup |
+| `backup list` | List available backups |
+| `backup restore <file>` | Restore database from backup (interactive confirmation) |
+| `backup auto` | Start backup daemon (reads interval from ENV) |
 
 ## Reverse Proxy Setup
 
@@ -186,21 +279,31 @@ Base URL: `https://api.example.com`
 |---|---|---|---|
 | `/health` | GET | No | Liveness check |
 | `/ready` | GET | No | Readiness check |
+| `/v1/auth/challenge` | GET | No | Get PoW challenge |
 | `/v1/auth/register` | POST | No | Register with email + password |
 | `/v1/auth/login` | POST | No | Login → access + refresh token |
 | `/v1/auth/refresh` | POST | No | Rotate tokens |
 | `/v1/auth/logout` | POST | No | Revoke refresh token |
-| `/v1/auth/oauth/{provider}` | POST | No | OAuth login (apple, google) |
+| `/v1/auth/logout-all` | POST | Yes | Revoke all sessions |
+| `/v1/auth/verify-email` | GET | No | Verify email via token |
+| `/v1/auth/forgot-password` | POST | No | Send password reset link |
+| `/v1/auth/reset-password` | POST | No | Reset password via token |
 | `/v1/vault` | GET | Yes | Get encrypted vault blob |
 | `/v1/vault` | PUT | Yes | Upload vault (optimistic locking) |
 | `/v1/vault/history` | GET | Yes | Version history |
+| `/v1/vault/history/{version}` | GET | Yes | Retrieve historical version |
 | `/v1/user` | GET/PUT/DELETE | Yes | User profile management |
 | `/v1/user/password` | PUT | Yes | Change password |
-| `/v1/devices` | GET | Yes | List devices |
+| `/v1/devices` | GET/POST | Yes | List / register devices |
 | `/v1/devices/{id}` | DELETE | Yes | Remove device |
 | `/v1/billing/status` | GET | Yes | Subscription status |
 | `/v1/billing/checkout` | POST | Yes | Create Stripe checkout |
 | `/v1/billing/portal` | POST | Yes | Stripe customer portal |
+| `/v1/webhooks/stripe` | POST | No | Stripe webhook |
+| `/v1/webhooks/apple` | POST | No | Apple App Store webhook |
+| `/v1/webhooks/google` | POST | No | Google Play webhook |
+| `/v1/audit` | GET | Yes | User activity log |
+| `/v1/attestation` | GET | No | Server attestation (signed JWT) |
 
 Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
 
