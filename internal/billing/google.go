@@ -88,7 +88,7 @@ func (p *GoogleProvider) VerifyPurchase(ctx context.Context, purchaseToken strin
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Google API error (HTTP %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("google API error (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 
 	var sub GoogleSubscription
