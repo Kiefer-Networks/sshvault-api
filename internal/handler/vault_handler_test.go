@@ -411,8 +411,8 @@ func TestPutVault_ChecksumMismatch(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 	msg := decodeError(t, rec)
-	if !strings.Contains(msg, "checksum mismatch") {
-		t.Errorf("error = %q, want checksum mismatch error", msg)
+	if msg != "failed to update vault" {
+		t.Errorf("error = %q, want %q", msg, "failed to update vault")
 	}
 }
 
@@ -435,8 +435,8 @@ func TestPutVault_FirstSync_WrongVersion(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 	msg := decodeError(t, rec)
-	if !strings.Contains(msg, "first sync must use version 1") {
-		t.Errorf("error = %q, want first sync version error", msg)
+	if msg != "failed to update vault" {
+		t.Errorf("error = %q, want %q", msg, "failed to update vault")
 	}
 }
 
