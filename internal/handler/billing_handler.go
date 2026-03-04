@@ -63,6 +63,30 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
+func (h *BillingHandler) CreateTeleportCheckout(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	user, err := h.userService.GetProfile(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to get user")
+		return
+	}
+
+	url, err := h.billingService.CreateTeleportCheckoutSession(r.Context(), userID, user.Email)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to create checkout session")
+		return
+	}
+
+	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActCheckout).
+		Detail("product", "teleport_addon").
+		Send()
+	respondJSON(w, http.StatusOK, map[string]string{"url": url})
+}
+
 func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

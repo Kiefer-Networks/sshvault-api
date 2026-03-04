@@ -194,7 +194,7 @@ func billingRevokeCmd() *cobra.Command {
 
 				// Cancel at Stripe API (includes prorated refund)
 				if provider == "stripe" && providerSubID != "" && cfgErr == nil && cfg.Billing.StripeSecretKey != "" {
-					sp := billing.NewStripeProvider(cfg.Billing.StripeSecretKey, "", "", "", nil, nil)
+					sp := billing.NewStripeProvider(cfg.Billing.StripeSecretKey, "", "", "", "", nil, nil)
 					if err := sp.CancelSubscription(ctx, providerSubID); err != nil {
 						fmt.Fprintf(os.Stderr, "  warning: Stripe cancellation failed for %s: %v\n", providerSubID, err)
 					} else {

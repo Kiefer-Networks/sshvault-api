@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/golang-migrate/migrate/v4"
@@ -32,6 +33,7 @@ import (
 	mw "github.com/kiefernetworks/shellvault-server/internal/middleware"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
+	"github.com/kiefernetworks/shellvault-server/internal/teleport"
 )
 
 func main() {
@@ -128,6 +130,7 @@ func main() {
 			cfg.Billing.StripeSecretKey,
 			cfg.Billing.StripeWebhookSecret,
 			cfg.Billing.StripePriceID,
+			cfg.Billing.StripeTeleportAddonPriceID,
 			cfg.Server.APIBaseURL,
 			subRepo,
 			mailer,
@@ -295,6 +298,47 @@ func main() {
 		}
 	}
 
+	// Teleport
+	teleportRepo := teleport.NewRepository(pool)
+	teleportService := teleport.NewService(teleportRepo)
+	teleportHandler := teleport.NewHandler(teleportService, auditLogger)
+
+	// Wire teleport unlock status into billing status response
+	billingService.SetTeleportChecker(teleportRepo)
+
+	// Wire addon purchase webhook to unlock teleport for the purchasing user
+	billingService.SetAddonPurchaseHandler(func(ctx context.Context, userID, productType string) error {
+		if productType != "teleport_addon" {
+			return fmt.Errorf("unknown addon product type: %s", productType)
+		}
+		uid, err := uuid.Parse(userID)
+		if err != nil {
+			return fmt.Errorf("parsing user ID: %w", err)
+		}
+		return teleportRepo.SetTeleportUnlocked(ctx, uid, true)
+	})
+
+	// Background cleanup of expired Teleport sessions (every hour)
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				n, err := teleportService.CleanupExpiredSessions(bgCtx)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to clean expired teleport sessions")
+				} else if n > 0 {
+					log.Info().Int64("count", n).Msg("cleaned expired teleport sessions")
+				}
+			}
+		}
+	}()
+
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
 	authHandler := handler.NewAuthHandler(authService, auditLogger)
@@ -408,8 +452,21 @@ func main() {
 			r.Get("/billing/status", billingHandler.GetStatus)
 			r.Post("/billing/checkout", billingHandler.CreateCheckout)
 			r.Post("/billing/portal", billingHandler.CreatePortal)
+			r.Post("/billing/checkout/teleport", billingHandler.CreateTeleportCheckout)
 			r.Post("/billing/verify-google", billingHandler.VerifyGoogle)
 			r.Post("/billing/verify-apple", billingHandler.VerifyApple)
+
+			// Teleport (requires addon purchase)
+			r.Route("/teleport", func(r chi.Router) {
+				r.Use(teleport.RequireTeleportUnlocked(teleportRepo))
+
+				r.Post("/clusters", teleportHandler.RegisterCluster)
+				r.Get("/clusters", teleportHandler.ListClusters)
+				r.Delete("/clusters/{id}", teleportHandler.DeleteCluster)
+				r.Post("/clusters/{id}/login", teleportHandler.Login)
+				r.Get("/clusters/{id}/nodes", teleportHandler.ListNodes)
+				r.Post("/clusters/{id}/certs", teleportHandler.GenerateCerts)
+			})
 		})
 
 		// Billing pages (public, shown after Stripe redirect)
