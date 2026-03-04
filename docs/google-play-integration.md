@@ -66,7 +66,7 @@ Add these environment variables to your `.env` or deployment config:
 
 ```env
 GOOGLE_SERVICE_ACCOUNT_PATH=/etc/shellvault/google-sa.json
-GOOGLE_PACKAGE_NAME=de.kiefernetworks.shellvault
+GOOGLE_PACKAGE_NAME=de.kiefer-networks.shellvault
 ```
 
 The server will automatically enable Google Play billing when both variables are set. Check the startup logs for:
@@ -103,7 +103,7 @@ Reference: [Test in-app billing](https://developer.android.com/google/play/billi
 | Variable | Description |
 |----------|-------------|
 | `GOOGLE_SERVICE_ACCOUNT_PATH` | Path to Google Cloud service account JSON key |
-| `GOOGLE_PACKAGE_NAME` | Android package name (e.g. `de.kiefernetworks.shellvault`) |
+| `GOOGLE_PACKAGE_NAME` | Android package name (e.g. `de.kiefer-networks.shellvault`) |
 
 ## API Endpoints
 
