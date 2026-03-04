@@ -39,6 +39,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.Password) > MaxPasswordLength {
+		respondError(w, http.StatusBadRequest, "password must be at most 256 characters")
+		return
+	}
+
 	resp, err := h.authService.Register(r.Context(), &req)
 	if err != nil {
 		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActRegister).
@@ -49,7 +54,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "already registered"):
-			respondError(w, http.StatusConflict, msg)
+			// Return a generic success to prevent email enumeration
+			respondJSON(w, http.StatusCreated, map[string]string{"status": "registration successful"})
 		case strings.Contains(msg, "invalid email"):
 			respondError(w, http.StatusBadRequest, msg)
 		default:
@@ -86,7 +92,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			Level(audit.LevelWarn).
 			Detail("email", req.Email).
 			Send()
-		respondError(w, http.StatusUnauthorized, err.Error())
+		respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
@@ -144,7 +150,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authService.VerifyEmail(r.Context(), token); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "invalid or expired token")
 		return
 	}
 
@@ -190,8 +196,13 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.NewPassword) > MaxPasswordLength {
+		respondError(w, http.StatusBadRequest, "password must be at most 256 characters")
+		return
+	}
+
 	if err := h.authService.ResetPassword(r.Context(), req.Token, req.NewPassword); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "invalid or expired token")
 		return
 	}
 

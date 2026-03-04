@@ -361,7 +361,7 @@ func main() {
 		// Auth routes (public, with strict rate limiting and timing equalization)
 		r.Route("/auth", func(r chi.Router) {
 			r.Use(authRateLimiter.Limit)
-			r.Use(mw.TimingEqualization(500 * time.Millisecond))
+			r.Use(mw.TimingEqualization(1500 * time.Millisecond))
 
 			// PoW challenge endpoint (no PoW required to get a challenge)
 			r.Get("/challenge", powGuard.HandleChallenge)

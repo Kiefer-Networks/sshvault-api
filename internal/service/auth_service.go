@@ -16,6 +16,11 @@ import (
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
+// dummyArgon2Hash is a pre-computed Argon2id hash used for timing equalization
+// when a login attempt targets a non-existent user. This ensures the response
+// time is indistinguishable from a real user with a wrong password.
+const dummyArgon2Hash = "$argon2id$v=19$m=262144,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 type AuthService struct {
 	userRepo      repository.UserRepository
 	tokenRepo     repository.TokenRepository
@@ -193,6 +198,8 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		return nil, fmt.Errorf("finding user: %w", err)
 	}
 	if user == nil {
+		// Perform a dummy password verify to equalize timing with real user lookups
+		_, _ = auth.VerifyPassword(req.Password, dummyArgon2Hash)
 		// Record failed attempt even for non-existent accounts to prevent enumeration
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)

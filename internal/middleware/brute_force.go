@@ -44,7 +44,7 @@ func (g *BruteForceGuard) IsAccountLocked(ctx context.Context, email string) (bo
 	var count int
 	if err := g.pool.QueryRow(ctx, query, email, cutoff).Scan(&count); err != nil {
 		log.Error().Err(err).Msg("failed to check account lockout")
-		return false, 0
+		return true, LockoutWindow // Fail-closed: assume locked on DB error
 	}
 
 	if count >= MaxFailedAttempts {
@@ -74,7 +74,8 @@ func (g *BruteForceGuard) IsIPBlocked(ctx context.Context, ip string) bool {
 	cutoff := time.Now().Add(-LockoutWindow)
 	var count int
 	if err := g.pool.QueryRow(ctx, query, ip, cutoff).Scan(&count); err != nil {
-		return false
+		log.Error().Err(err).Msg("failed to check IP block")
+		return true // Fail-closed: assume blocked on DB error
 	}
 
 	return count >= IPBlockThreshold

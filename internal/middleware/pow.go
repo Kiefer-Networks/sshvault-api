@@ -49,6 +49,9 @@ func NewPowGuard(baseDifficulty int) *PowGuard {
 	}
 }
 
+// maxPendingChallenges is the maximum number of outstanding PoW challenges.
+const maxPendingChallenges = 10000
+
 // GenerateChallenge creates a new PoW challenge with adaptive difficulty.
 func (g *PowGuard) GenerateChallenge() (PowChallenge, error) {
 	b := make([]byte, 32)
@@ -57,6 +60,10 @@ func (g *PowGuard) GenerateChallenge() (PowChallenge, error) {
 	}
 
 	g.mu.Lock()
+	if len(g.pending) >= maxPendingChallenges {
+		g.mu.Unlock()
+		return PowChallenge{}, errPowCapacity
+	}
 	difficulty := g.currentDifficulty()
 	challenge := PowChallenge{
 		Challenge:  hex.EncodeToString(b),
@@ -68,6 +75,9 @@ func (g *PowGuard) GenerateChallenge() (PowChallenge, error) {
 
 	return challenge, nil
 }
+
+// errPowCapacity is returned when the pending challenge map is full.
+var errPowCapacity = fmt.Errorf("challenge capacity exceeded")
 
 // Verify checks a PoW solution. Returns true if valid, consumes the challenge.
 func (g *PowGuard) Verify(sol PowSolution) bool {
@@ -125,6 +135,10 @@ func (g *PowGuard) RequirePoW(next http.Handler) http.Handler {
 func (g *PowGuard) HandleChallenge(w http.ResponseWriter, r *http.Request) {
 	challenge, err := g.GenerateChallenge()
 	if err != nil {
+		if err == errPowCapacity {
+			respondJSONError(w, http.StatusServiceUnavailable, "server busy, try again later")
+			return
+		}
 		respondJSONError(w, http.StatusInternalServerError, "failed to generate challenge")
 		return
 	}

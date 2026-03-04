@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -75,7 +76,11 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Use RemoteAddr which is already set correctly by chi's RealIP middleware.
 		// Never read X-Forwarded-For directly — that allows IP spoofing.
+		// Strip port to rate-limit by IP only, not IP:port.
 		key := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(key); err == nil {
+			key = host
+		}
 
 		limiter := rl.getVisitor(key)
 		if !limiter.Allow() {

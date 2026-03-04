@@ -84,7 +84,7 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 			respondJSON(w, http.StatusConflict, conflict)
 			return
 		}
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "failed to update vault")
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request)
 
 	resp, err := h.vaultService.GetHistoryVersion(r.Context(), userID, version)
 	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
+		respondError(w, http.StatusNotFound, "version not found")
 		return
 	}
 
