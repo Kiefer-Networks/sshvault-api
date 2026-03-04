@@ -3,12 +3,22 @@ package teleport
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gravitational/teleport/api/client"
 	"github.com/rs/zerolog/log"
 )
+
+// validAuthMethods defines the accepted authentication methods.
+var validAuthMethods = map[string]bool{
+	"local":         true,
+	"sso_oidc":      true,
+	"sso_saml":      true,
+	"identity_file": true,
+}
 
 const defaultCertTTL = 12 * time.Hour
 
@@ -27,11 +37,26 @@ func (s *Service) RegisterCluster(ctx context.Context, userID uuid.UUID, req Reg
 	if req.Name == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
+	if len(req.Name) > 255 {
+		return nil, fmt.Errorf("cluster name too long")
+	}
 	if req.ProxyAddr == "" {
 		return nil, fmt.Errorf("proxy address is required")
 	}
+	if len(req.ProxyAddr) > 512 {
+		return nil, fmt.Errorf("proxy address too long")
+	}
+	if err := validateProxyAddr(req.ProxyAddr); err != nil {
+		return nil, err
+	}
 	if req.AuthMethod == "" {
 		req.AuthMethod = "local"
+	}
+	if !validAuthMethods[req.AuthMethod] {
+		return nil, fmt.Errorf("invalid auth method")
+	}
+	if len(req.Identity) > 1<<20 { // 1 MB limit
+		return nil, fmt.Errorf("identity file too large")
 	}
 
 	c := &Cluster{
@@ -188,6 +213,38 @@ func (s *Service) SetUnlocked(ctx context.Context, userID uuid.UUID, unlocked bo
 // CleanupExpiredSessions deletes sessions that have passed their expiry.
 func (s *Service) CleanupExpiredSessions(ctx context.Context) (int64, error) {
 	return s.repo.DeleteExpiredSessions(ctx)
+}
+
+// validateProxyAddr checks that the proxy address is a valid host:port and
+// rejects private/loopback addresses to prevent SSRF.
+func validateProxyAddr(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		// Try adding default port if none specified.
+		host = addr
+		port = "443"
+		if _, _, err2 := net.SplitHostPort(host + ":" + port); err2 != nil {
+			return fmt.Errorf("invalid proxy address format (expected host:port)")
+		}
+	}
+	if host == "" || port == "" {
+		return fmt.Errorf("proxy address must include host and port")
+	}
+
+	// Reject loopback and private IP ranges.
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
+			return fmt.Errorf("proxy address must not be a private or loopback address")
+		}
+	}
+
+	// Reject localhost variants.
+	lower := strings.ToLower(host)
+	if lower == "localhost" || strings.HasSuffix(lower, ".local") {
+		return fmt.Errorf("proxy address must not be a local address")
+	}
+
+	return nil
 }
 
 // clusterCredentials resolves the appropriate Teleport credentials for a cluster.

@@ -196,11 +196,16 @@ func (h *BillingHandler) VerifyGoogle(w http.ResponseWriter, r *http.Request) {
 		Detail("status", sub.Status).
 		Send()
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"active":   sub.Status == "active",
-		"provider": "google",
-		"status":   sub.Status,
-	})
+	status, err := h.billingService.GetStatus(r.Context(), userID)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"active":   sub.Status == "active",
+			"provider": "google",
+			"status":   sub.Status,
+		})
+		return
+	}
+	respondJSON(w, http.StatusOK, status)
 }
 
 func (h *BillingHandler) VerifyApple(w http.ResponseWriter, r *http.Request) {
@@ -235,11 +240,16 @@ func (h *BillingHandler) VerifyApple(w http.ResponseWriter, r *http.Request) {
 		Detail("status", sub.Status).
 		Send()
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"active":   sub.Status == "active",
-		"provider": "apple",
-		"status":   sub.Status,
-	})
+	status, err := h.billingService.GetStatus(r.Context(), userID)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"active":   sub.Status == "active",
+			"provider": "apple",
+			"status":   sub.Status,
+		})
+		return
+	}
+	respondJSON(w, http.StatusOK, status)
 }
 
 func (h *BillingHandler) SuccessPage(w http.ResponseWriter, r *http.Request) {

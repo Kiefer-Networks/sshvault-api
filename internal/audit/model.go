@@ -25,7 +25,8 @@ const (
 	CatDevice  Category = "DEVICE"
 	CatUser    Category = "USER"
 	CatSystem  Category = "SYSTEM"
-	CatWebhook Category = "WEBHOOK"
+	CatWebhook  Category = "WEBHOOK"
+	CatTeleport Category = "TELEPORT"
 )
 
 // Action describes the specific operation that was performed.
@@ -66,6 +67,14 @@ const (
 	ActWebhookStripe Action = "WEBHOOK_STRIPE"
 	ActWebhookApple  Action = "WEBHOOK_APPLE"
 	ActWebhookGoogle Action = "WEBHOOK_GOOGLE"
+
+	// Teleport actions
+	ActClusterRegister Action = "CLUSTER_REGISTER"
+	ActClusterList     Action = "CLUSTER_LIST"
+	ActClusterDelete   Action = "CLUSTER_DELETE"
+	ActTeleportLogin   Action = "TELEPORT_LOGIN"
+	ActNodeList        Action = "NODE_LIST"
+	ActCertGenerate    Action = "CERT_GENERATE"
 
 	// System actions
 	ActStartup  Action = "STARTUP"

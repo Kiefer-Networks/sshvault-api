@@ -11,18 +11,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Audit actions for Teleport operations.
-const (
-	CatTeleport audit.Category = "TELEPORT"
-
-	ActClusterRegister audit.Action = "CLUSTER_REGISTER"
-	ActClusterList     audit.Action = "CLUSTER_LIST"
-	ActClusterDelete   audit.Action = "CLUSTER_DELETE"
-	ActTeleportLogin   audit.Action = "TELEPORT_LOGIN"
-	ActNodeList        audit.Action = "NODE_LIST"
-	ActCertGenerate    audit.Action = "CERT_GENERATE"
-)
-
 // Handler exposes HTTP endpoints for Teleport cluster management.
 type Handler struct {
 	service *Service
@@ -59,11 +47,11 @@ func (h *Handler) RegisterCluster(w http.ResponseWriter, r *http.Request) {
 	cluster, err := h.service.RegisterCluster(r.Context(), userID, req)
 	if err != nil {
 		log.Warn().Err(err).Str("user_id", userID.String()).Msg("failed to register teleport cluster")
-		respondError(w, http.StatusBadRequest, err.Error())
+		respondError(w, http.StatusBadRequest, "failed to register cluster")
 		return
 	}
 
-	h.audit.LogFromRequest(r, CatTeleport, ActClusterRegister).
+	h.audit.LogFromRequest(r, audit.CatTeleport, audit.ActClusterRegister).
 		Detail("cluster_id", cluster.ID.String()).
 		Detail("proxy_addr", cluster.ProxyAddr).
 		Send()
@@ -80,6 +68,7 @@ func (h *Handler) ListClusters(w http.ResponseWriter, r *http.Request) {
 
 	clusters, err := h.service.ListClusters(r.Context(), userID)
 	if err != nil {
+		log.Warn().Err(err).Str("user_id", userID.String()).Msg("failed to list teleport clusters")
 		respondError(w, http.StatusInternalServerError, "failed to list clusters")
 		return
 	}
@@ -88,7 +77,7 @@ func (h *Handler) ListClusters(w http.ResponseWriter, r *http.Request) {
 		clusters = []Cluster{}
 	}
 
-	h.audit.LogFromRequest(r, CatTeleport, ActClusterList).Send()
+	h.audit.LogFromRequest(r, audit.CatTeleport, audit.ActClusterList).Send()
 	respondJSON(w, http.StatusOK, ClusterListResponse{Clusters: clusters})
 }
 
@@ -106,11 +95,12 @@ func (h *Handler) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.DeleteCluster(r.Context(), clusterID, userID); err != nil {
+		log.Warn().Err(err).Str("cluster_id", clusterID.String()).Msg("failed to delete teleport cluster")
 		respondError(w, http.StatusInternalServerError, "failed to delete cluster")
 		return
 	}
 
-	h.audit.LogFromRequest(r, CatTeleport, ActClusterDelete).
+	h.audit.LogFromRequest(r, audit.CatTeleport, audit.ActClusterDelete).
 		Detail("cluster_id", clusterID.String()).
 		Send()
 
@@ -142,7 +132,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.audit.LogFromRequest(r, CatTeleport, ActTeleportLogin).
+	h.audit.LogFromRequest(r, audit.CatTeleport, audit.ActTeleportLogin).
 		Detail("cluster_id", clusterID.String()).
 		Send()
 
@@ -173,7 +163,7 @@ func (h *Handler) ListNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = []Node{}
 	}
 
-	h.audit.LogFromRequest(r, CatTeleport, ActNodeList).
+	h.audit.LogFromRequest(r, audit.CatTeleport, audit.ActNodeList).
 		Detail("cluster_id", clusterID.String()).
 		Detail("count", len(nodes)).
 		Send()
@@ -207,7 +197,7 @@ func (h *Handler) GenerateCerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.audit.LogFromRequest(r, CatTeleport, ActCertGenerate).
+	h.audit.LogFromRequest(r, audit.CatTeleport, audit.ActCertGenerate).
 		Detail("cluster_id", clusterID.String()).
 		Detail("expires_at", certs.ExpiresAt.String()).
 		Send()
