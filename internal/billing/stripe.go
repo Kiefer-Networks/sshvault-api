@@ -15,6 +15,8 @@ import (
 	portalsession "github.com/stripe/stripe-go/v81/billingportal/session"
 	"github.com/stripe/stripe-go/v81/checkout/session"
 	stripecustomer "github.com/stripe/stripe-go/v81/customer"
+	stripeinvoice "github.com/stripe/stripe-go/v81/invoice"
+	striperefund "github.com/stripe/stripe-go/v81/refund"
 	stripesub "github.com/stripe/stripe-go/v81/subscription"
 	"github.com/stripe/stripe-go/v81/webhook"
 )
@@ -110,8 +112,86 @@ func (p *StripeProvider) CreatePortalSession(ctx context.Context, subscriptionID
 }
 
 func (p *StripeProvider) CancelSubscription(ctx context.Context, subscriptionID string) error {
-	_, err := stripesub.Cancel(subscriptionID, nil)
-	return err
+	// Retrieve the subscription to calculate prorated refund
+	sub, err := stripesub.Get(subscriptionID, nil)
+	if err != nil {
+		return fmt.Errorf("retrieving subscription: %w", err)
+	}
+
+	// Cancel the subscription immediately
+	_, err = stripesub.Cancel(subscriptionID, nil)
+	if err != nil {
+		return fmt.Errorf("canceling subscription: %w", err)
+	}
+
+	// Issue prorated refund for the unused portion
+	if sub.LatestInvoice != nil && sub.LatestInvoice.ID != "" {
+		p.issueProRataRefund(sub)
+	}
+
+	return nil
+}
+
+// issueProRataRefund calculates the unused portion of the current billing
+// period and refunds it via the Stripe Refund API. Failures are logged
+// but do not prevent the cancellation itself.
+func (p *StripeProvider) issueProRataRefund(sub *stripe.Subscription) {
+	now := time.Now().Unix()
+	periodStart := sub.CurrentPeriodStart
+	periodEnd := sub.CurrentPeriodEnd
+
+	if periodEnd <= periodStart || now >= periodEnd {
+		return // period already expired, nothing to refund
+	}
+
+	// Get the latest invoice to find the charge/payment intent
+	inv, err := stripeinvoice.Get(sub.LatestInvoice.ID, nil)
+	if err != nil {
+		log.Error().Err(err).Str("invoice", sub.LatestInvoice.ID).
+			Msg("failed to retrieve invoice for prorated refund")
+		return
+	}
+
+	if inv.Charge == nil || inv.Charge.ID == "" {
+		log.Warn().Str("invoice", inv.ID).
+			Msg("no charge found on invoice, skipping prorated refund")
+		return
+	}
+
+	if inv.AmountPaid <= 0 {
+		return // nothing was paid
+	}
+
+	// Calculate prorated refund: (remaining_days / total_days) * amount_paid
+	totalPeriod := float64(periodEnd - periodStart)
+	remaining := float64(periodEnd - now)
+	refundAmount := int64(float64(inv.AmountPaid) * (remaining / totalPeriod))
+
+	if refundAmount <= 0 {
+		return
+	}
+
+	params := &stripe.RefundParams{
+		Charge: stripe.String(inv.Charge.ID),
+		Amount: stripe.Int64(refundAmount),
+		Reason: stripe.String(string(stripe.RefundReasonRequestedByCustomer)),
+	}
+
+	refund, err := striperefund.New(params)
+	if err != nil {
+		log.Error().Err(err).
+			Int64("amount", refundAmount).
+			Str("charge", inv.Charge.ID).
+			Msg("failed to create prorated refund")
+		return
+	}
+
+	log.Info().
+		Str("refund_id", refund.ID).
+		Int64("amount", refundAmount).
+		Str("currency", string(refund.Currency)).
+		Str("subscription", sub.ID).
+		Msg("prorated refund issued")
 }
 
 func (p *StripeProvider) HandleWebhook(ctx context.Context, payload, signature string) error {

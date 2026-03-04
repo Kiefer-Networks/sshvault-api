@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
+	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/config"
 )
 
@@ -162,21 +163,30 @@ func userInfoCmd() *cobra.Command {
 			}
 
 			// Subscription
-			var subProvider, subStatus string
-			var periodEnd *time.Time
+			var subProvider, subProviderSubID, subStatus string
+			var periodStart, periodEnd *time.Time
+			var subCreatedAt time.Time
 			err = pool.QueryRow(ctx,
-				`SELECT provider, status, current_period_end FROM subscriptions
-				 WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, user.id).
-				Scan(&subProvider, &subStatus, &periodEnd)
+				`SELECT provider, provider_sub_id, status, current_period_start, current_period_end, created_at
+				 FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, user.id).
+				Scan(&subProvider, &subProviderSubID, &subStatus, &periodStart, &periodEnd, &subCreatedAt)
 			fmt.Println("\nSubscription:")
 			if err != nil {
 				fmt.Println("  (none)")
 			} else {
-				fmt.Printf("  Provider: %s\n", subProvider)
-				fmt.Printf("  Status:   %s\n", subStatus)
-				if periodEnd != nil {
-					fmt.Printf("  Expires:  %s\n", periodEnd.Format(time.RFC3339))
+				fmt.Printf("  Provider:     %s\n", subProvider)
+				fmt.Printf("  Provider ID:  %s\n", subProviderSubID)
+				fmt.Printf("  Status:       %s\n", subStatus)
+				if periodStart != nil {
+					fmt.Printf("  Period Start: %s\n", periodStart.Format(time.RFC3339))
 				}
+				if periodEnd != nil {
+					fmt.Printf("  Period End:   %s\n", periodEnd.Format(time.RFC3339))
+					if time.Now().After(*periodEnd) {
+						fmt.Printf("  !! EXPIRED\n")
+					}
+				}
+				fmt.Printf("  Created:      %s\n", subCreatedAt.Format(time.RFC3339))
 			}
 
 			// Vault
@@ -474,8 +484,9 @@ func userAuditCmd() *cobra.Command {
 			}
 
 			rows, err := pool.Query(ctx,
-				`SELECT category, action, details, created_at FROM audit_logs
-				 WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+				`SELECT timestamp, level, category, action, actor_email, ip_address, details
+				 FROM audit_logs WHERE actor_id = $1
+				 ORDER BY timestamp DESC LIMIT $2`,
 				user.id, limit)
 			if err != nil {
 				return fmt.Errorf("query: %w", err)
@@ -483,25 +494,26 @@ func userAuditCmd() *cobra.Command {
 			defer rows.Close()
 
 			fmt.Printf("Audit log for: %s (%s)\n\n", user.email, user.id)
-			fmt.Printf("%-20s  %-25s  %-30s  %s\n",
-				"TIMESTAMP", "CATEGORY", "ACTION", "DETAILS")
-			fmt.Println(strings.Repeat("─", 110))
+			fmt.Printf("%-20s  %-6s  %-15s  %-20s  %-15s  %s\n",
+				"TIMESTAMP", "LEVEL", "CATEGORY", "ACTION", "IP", "DETAILS")
+			fmt.Println(strings.Repeat("─", 120))
 
 			count := 0
 			for rows.Next() {
-				var category, action string
-				var details *string
-				var createdAt time.Time
-				if err := rows.Scan(&category, &action, &details, &createdAt); err != nil {
+				var ts time.Time
+				var level, category, action, actorEmail, ip string
+				var details []byte
+				if err := rows.Scan(&ts, &level, &category, &action, &actorEmail, &ip, &details); err != nil {
 					continue
 				}
 				detailStr := ""
-				if details != nil {
-					detailStr = truncate(*details, 30)
+				if len(details) > 2 { // skip empty "{}"
+					detailStr = truncate(string(details), 30)
 				}
-				fmt.Printf("%-20s  %-25s  %-30s  %s\n",
-					createdAt.Format("2006-01-02 15:04:05"),
-					category, action, detailStr)
+				fmt.Printf("%-20s  %-6s  %-15s  %-20s  %-15s  %s\n",
+					ts.Format("2006-01-02 15:04:05"),
+					level, category, action,
+					truncate(ip, 15), detailStr)
 				count++
 			}
 			if err := rows.Err(); err != nil {
@@ -705,7 +717,7 @@ Examples:
 func billingRevokeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "revoke <email-or-id>",
-		Short: "Revoke all subscriptions for a user",
+		Short: "Revoke all subscriptions for a user (cancels at Stripe with prorated refund)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
@@ -714,14 +726,53 @@ func billingRevokeCmd() *cobra.Command {
 				return err
 			}
 
-			result, err := pool.Exec(ctx,
-				`UPDATE subscriptions SET status = 'canceled', updated_at = now() WHERE user_id = $1`,
+			// Find active subscriptions with their provider details
+			rows, err := pool.Query(ctx,
+				`SELECT id, provider, provider_sub_id, status FROM subscriptions
+				 WHERE user_id = $1 AND status IN ('active', 'past_due')`,
 				user.id)
 			if err != nil {
-				return fmt.Errorf("revoke: %w", err)
+				return fmt.Errorf("query: %w", err)
+			}
+			defer rows.Close()
+
+			cfg, cfgErr := config.Load()
+
+			count := 0
+			for rows.Next() {
+				var subID uuid.UUID
+				var provider, providerSubID, status string
+				if err := rows.Scan(&subID, &provider, &providerSubID, &status); err != nil {
+					continue
+				}
+
+				// Cancel at Stripe API (includes prorated refund)
+				if provider == "stripe" && providerSubID != "" && cfgErr == nil && cfg.Billing.StripeSecretKey != "" {
+					sp := billing.NewStripeProvider(cfg.Billing.StripeSecretKey, "", "", "", nil, nil)
+					if err := sp.CancelSubscription(ctx, providerSubID); err != nil {
+						fmt.Fprintf(os.Stderr, "  warning: Stripe cancellation failed for %s: %v\n", providerSubID, err)
+					} else {
+						fmt.Printf("  Stripe subscription %s canceled (prorated refund issued)\n", providerSubID)
+					}
+				}
+
+				// Update local DB status
+				if _, err := pool.Exec(ctx,
+					`UPDATE subscriptions SET status = 'canceled', updated_at = now() WHERE id = $1`,
+					subID); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: failed to update DB for %s: %v\n", subID, err)
+				}
+				count++
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating rows: %w", err)
 			}
 
-			fmt.Printf("Revoked %d subscription(s) for %s.\n", result.RowsAffected(), user.email)
+			if count == 0 {
+				fmt.Printf("No active subscriptions found for %s.\n", user.email)
+			} else {
+				fmt.Printf("Revoked %d subscription(s) for %s.\n", count, user.email)
+			}
 			return nil
 		},
 	}
