@@ -127,11 +127,21 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 }
 
 func (s *UserService) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
-	// Cancel active Stripe subscription if exists (best-effort).
+	// Cancel active subscription if exists (best-effort).
 	if sub, err := s.subRepo.GetByUserID(ctx, userID); err == nil && sub != nil {
-		if sub.Provider == "stripe" && sub.Status == model.SubStatusActive {
-			if err := s.billingProvider.CancelSubscription(ctx, sub.ProviderSubID); err != nil {
-				log.Warn().Err(err).Str("user_id", userID.String()).Msg("failed to cancel Stripe subscription during account deletion")
+		if sub.Status == model.SubStatusActive {
+			switch sub.Provider {
+			case "stripe":
+				if err := s.billingProvider.CancelSubscription(ctx, sub.ProviderSubID); err != nil {
+					log.Warn().Err(err).Str("user_id", userID.String()).Msg("failed to cancel Stripe subscription during account deletion")
+				}
+			case "apple", "google":
+				// Store-managed subscriptions: mark as canceled in DB.
+				// The actual cancellation is handled by the respective app store.
+				sub.Status = model.SubStatusCanceled
+				if err := s.subRepo.Update(ctx, sub); err != nil {
+					log.Warn().Err(err).Str("user_id", userID.String()).Str("provider", sub.Provider).Msg("failed to cancel subscription during account deletion")
+				}
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,10 +13,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
+	"github.com/stripe/stripe-go/v81"
+	stripesub "github.com/stripe/stripe-go/v81/subscription"
 
 	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/config"
 )
+
+// ============================================================
+// MANIFEST TYPES
+// ============================================================
+
+type restoreManifest struct {
+	CreatedAt         time.Time      `json:"created_at"`
+	DeletedUsers      []manifestUser `json:"deleted_users"`
+	CanceledSubs      []manifestSub  `json:"canceled_subscriptions"`
+	RevokedTokenCount int            `json:"revoked_token_count"`
+}
+
+type manifestUser struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	DeletedAt time.Time `json:"deleted_at"`
+}
+
+type manifestSub struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Provider      string    `json:"provider"`
+	ProviderSubID string    `json:"provider_sub_id"`
+	Status        string    `json:"status"`
+}
 
 var pool *pgxpool.Pool
 
@@ -577,6 +605,7 @@ func billingCmd() *cobra.Command {
 	cmd.AddCommand(billingInfoCmd())
 	cmd.AddCommand(billingSetCmd())
 	cmd.AddCommand(billingRevokeCmd())
+	cmd.AddCommand(billingSyncCmd())
 	return cmd
 }
 
@@ -778,6 +807,71 @@ func billingRevokeCmd() *cobra.Command {
 	}
 }
 
+func billingSyncCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sync",
+		Short: "Reconcile all active subscriptions against provider APIs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			ctx := context.Background()
+
+			// Count active subscriptions by provider
+			rows, err := pool.Query(ctx,
+				`SELECT provider, COUNT(*) FROM subscriptions WHERE status = 'active' GROUP BY provider`)
+			if err != nil {
+				return fmt.Errorf("query: %w", err)
+			}
+			defer rows.Close()
+
+			fmt.Println("Active subscriptions by provider:")
+			for rows.Next() {
+				var provider string
+				var count int
+				if err := rows.Scan(&provider, &count); err != nil {
+					continue
+				}
+				fmt.Printf("  %s: %d\n", provider, count)
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating rows: %w", err)
+			}
+			fmt.Println()
+
+			// Stripe sync
+			if cfg.Billing.StripeSecretKey != "" {
+				fmt.Println("Syncing Stripe subscriptions...")
+				checked, corrected, err := reconcileStripe(ctx, pool, cfg.Billing.StripeSecretKey)
+				if err != nil {
+					return fmt.Errorf("stripe sync: %w", err)
+				}
+				fmt.Printf("  Checked: %d, Corrected: %d\n\n", checked, corrected)
+			} else {
+				fmt.Println("Stripe: skipped (STRIPE_SECRET_KEY not set)")
+			}
+
+			// Apple/Google: warn
+			var appleCount, googleCount int
+			_ = pool.QueryRow(ctx,
+				`SELECT COUNT(*) FROM subscriptions WHERE provider = 'apple' AND status = 'active'`).Scan(&appleCount)
+			_ = pool.QueryRow(ctx,
+				`SELECT COUNT(*) FROM subscriptions WHERE provider = 'google' AND status = 'active'`).Scan(&googleCount)
+
+			if appleCount > 0 {
+				fmt.Printf("Apple: %d active subscription(s) — verification not yet implemented\n", appleCount)
+			}
+			if googleCount > 0 {
+				fmt.Printf("Google: %d active subscription(s) — verification not yet implemented\n", googleCount)
+			}
+
+			fmt.Println("\nSync complete.")
+			return nil
+		},
+	}
+}
+
 // ============================================================
 // BACKUP COMMANDS
 // ============================================================
@@ -798,7 +892,7 @@ func backupCreateCmd() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a database backup (pg_dump)",
+		Short: "Create a database backup (pg_dump + manifest)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -815,6 +909,21 @@ func backupCreateCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Backup created: %s\n", path)
+
+			// Create manifest alongside the SQL dump
+			ctx := context.Background()
+			manifest, err := captureManifest(ctx, pool)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: manifest creation failed: %v\n", err)
+				return nil
+			}
+			manifestPath := strings.TrimSuffix(path, ".sql.gz") + ".manifest.json"
+			if err := writeManifestFile(manifest, manifestPath); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: manifest write failed: %v\n", err)
+				return nil
+			}
+			fmt.Printf("Manifest created: %s (%d deleted users, %d canceled subs, %d revoked tokens)\n",
+				manifestPath, len(manifest.DeletedUsers), len(manifest.CanceledSubs), manifest.RevokedTokenCount)
 			return nil
 		},
 	}
@@ -823,9 +932,10 @@ func backupCreateCmd() *cobra.Command {
 }
 
 func backupRestoreCmd() *cobra.Command {
-	return &cobra.Command{
+	var skipReconcile bool
+	cmd := &cobra.Command{
 		Use:   "restore <file>",
-		Short: "Restore database from a backup file",
+		Short: "Restore database from a backup file (with reconciliation)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -837,18 +947,83 @@ func backupRestoreCmd() *cobra.Command {
 
 			fmt.Printf("RESTORE database from %s?\n", file)
 			fmt.Println("WARNING: This will overwrite the current database!")
+			fmt.Println("Deleted accounts and canceled subscriptions will be preserved.")
 			if !confirm() {
 				fmt.Println("Aborted.")
 				return nil
 			}
 
+			ctx := context.Background()
+
+			// Step 1: Pre-restore snapshot
+			fmt.Println("\n[1/5] Capturing pre-restore manifest...")
+			preManifest, err := captureManifest(ctx, pool)
+			if err != nil {
+				return fmt.Errorf("pre-restore manifest: %w", err)
+			}
+			fmt.Printf("  Captured: %d deleted users, %d canceled subs, %d revoked tokens\n",
+				len(preManifest.DeletedUsers), len(preManifest.CanceledSubs), preManifest.RevokedTokenCount)
+
+			// Step 2: Restore SQL dump
+			fmt.Println("\n[2/5] Restoring database...")
 			if err := restoreBackup(cfg.Database.URL, file); err != nil {
 				return err
 			}
-			fmt.Println("Database restored successfully.")
+			fmt.Println("  Database restored.")
+
+			if skipReconcile {
+				fmt.Println("\nReconciliation skipped (--no-reconcile).")
+				return nil
+			}
+
+			// Reconnect pool after restore
+			pool.Close()
+			pool, err = pgxpool.New(ctx, cfg.Database.URL)
+			if err != nil {
+				return fmt.Errorf("reconnecting after restore: %w", err)
+			}
+
+			// Step 3: Load backup manifest (if exists alongside the backup file)
+			fmt.Println("\n[3/5] Loading backup manifest...")
+			var backupManifest *restoreManifest
+			manifestPath := strings.TrimSuffix(file, ".sql.gz") + ".manifest.json"
+			if bm, err := loadManifestFile(manifestPath); err == nil {
+				backupManifest = bm
+				fmt.Printf("  Loaded: %d deleted users, %d canceled subs\n",
+					len(bm.DeletedUsers), len(bm.CanceledSubs))
+			} else {
+				fmt.Println("  No backup manifest found, using pre-restore snapshot only.")
+			}
+
+			// Step 4: Merge and apply
+			fmt.Println("\n[4/5] Applying reconciliation...")
+			merged := preManifest
+			if backupManifest != nil {
+				merged = mergeManifests(preManifest, backupManifest)
+			}
+			deletedUsers, canceledSubs, revokedTokens := applyManifest(ctx, pool, merged)
+			fmt.Printf("  Re-deleted %d user(s), re-canceled %d subscription(s), re-revoked %d token(s)\n",
+				deletedUsers, canceledSubs, revokedTokens)
+
+			// Step 5: Stripe reconciliation (if configured)
+			fmt.Println("\n[5/5] Stripe reconciliation...")
+			if cfg.Billing.StripeSecretKey != "" {
+				checked, corrected, err := reconcileStripe(ctx, pool, cfg.Billing.StripeSecretKey)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: Stripe reconciliation error: %v\n", err)
+				} else {
+					fmt.Printf("  Checked %d Stripe subscription(s), corrected %d\n", checked, corrected)
+				}
+			} else {
+				fmt.Println("  Skipped (STRIPE_SECRET_KEY not set)")
+			}
+
+			fmt.Println("\nRestore complete with reconciliation.")
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&skipReconcile, "no-reconcile", false, "Skip post-restore reconciliation")
+	return cmd
 }
 
 func backupListCmd() *cobra.Command {
@@ -921,6 +1096,7 @@ func backupAutoCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "initial backup failed: %v\n", err)
 			} else {
 				fmt.Printf("[%s] Backup created: %s\n", time.Now().Format(time.RFC3339), path)
+				createBackupManifest(path)
 			}
 			pruneBackups(cfg.Backup.Dir, cfg.Backup.Retention)
 
@@ -934,6 +1110,7 @@ func backupAutoCmd() *cobra.Command {
 					continue
 				}
 				fmt.Printf("[%s] Backup created: %s\n", t.Format(time.RFC3339), path)
+				createBackupManifest(path)
 				pruneBackups(cfg.Backup.Dir, cfg.Backup.Retention)
 			}
 			return nil
@@ -1003,6 +1180,22 @@ func createBackup(databaseURL, dir string) (string, error) {
 	return path, nil
 }
 
+func createBackupManifest(backupPath string) {
+	ctx := context.Background()
+	manifest, err := captureManifest(ctx, pool)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: manifest creation failed: %v\n", err)
+		return
+	}
+	manifestPath := strings.TrimSuffix(backupPath, ".sql.gz") + ".manifest.json"
+	if err := writeManifestFile(manifest, manifestPath); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: manifest write failed: %v\n", err)
+		return
+	}
+	fmt.Printf("  Manifest: %d deleted users, %d canceled subs\n",
+		len(manifest.DeletedUsers), len(manifest.CanceledSubs))
+}
+
 func restoreBackup(databaseURL, file string) error {
 	info, err := os.Stat(file)
 	if err != nil {
@@ -1067,6 +1260,223 @@ func pruneBackups(dir string, keep int) {
 			fmt.Printf("  Pruned old backup: %s\n", e.Name())
 		}
 	}
+}
+
+// ============================================================
+// MANIFEST HELPERS
+// ============================================================
+
+func captureManifest(ctx context.Context, p *pgxpool.Pool) (*restoreManifest, error) {
+	m := &restoreManifest{CreatedAt: time.Now()}
+
+	// Deleted users
+	rows, err := p.Query(ctx,
+		`SELECT id, email, deleted_at FROM users WHERE deleted_at IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("querying deleted users: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u manifestUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.DeletedAt); err != nil {
+			return nil, fmt.Errorf("scanning deleted user: %w", err)
+		}
+		m.DeletedUsers = append(m.DeletedUsers, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating deleted users: %w", err)
+	}
+
+	// Canceled/expired subscriptions
+	subRows, err := p.Query(ctx,
+		`SELECT id, user_id, provider, provider_sub_id, status
+		 FROM subscriptions WHERE status IN ('canceled', 'expired')`)
+	if err != nil {
+		return nil, fmt.Errorf("querying canceled subs: %w", err)
+	}
+	defer subRows.Close()
+	for subRows.Next() {
+		var s manifestSub
+		if err := subRows.Scan(&s.ID, &s.UserID, &s.Provider, &s.ProviderSubID, &s.Status); err != nil {
+			return nil, fmt.Errorf("scanning canceled sub: %w", err)
+		}
+		m.CanceledSubs = append(m.CanceledSubs, s)
+	}
+	if err := subRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating canceled subs: %w", err)
+	}
+
+	// Revoked token count
+	err = p.QueryRow(ctx,
+		`SELECT COUNT(*) FROM refresh_tokens WHERE revoked = TRUE`).Scan(&m.RevokedTokenCount)
+	if err != nil {
+		return nil, fmt.Errorf("counting revoked tokens: %w", err)
+	}
+
+	return m, nil
+}
+
+func writeManifestFile(m *restoreManifest, path string) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling manifest: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
+	}
+	return nil
+}
+
+func loadManifestFile(path string) (*restoreManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading manifest: %w", err)
+	}
+	var m restoreManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing manifest: %w", err)
+	}
+	return &m, nil
+}
+
+func mergeManifests(a, b *restoreManifest) *restoreManifest {
+	merged := &restoreManifest{CreatedAt: time.Now()}
+
+	// Union of deleted users (deduplicate by ID)
+	userSeen := make(map[uuid.UUID]bool)
+	for _, u := range a.DeletedUsers {
+		merged.DeletedUsers = append(merged.DeletedUsers, u)
+		userSeen[u.ID] = true
+	}
+	for _, u := range b.DeletedUsers {
+		if !userSeen[u.ID] {
+			merged.DeletedUsers = append(merged.DeletedUsers, u)
+		}
+	}
+
+	// Union of canceled subs (deduplicate by ID)
+	subSeen := make(map[uuid.UUID]bool)
+	for _, s := range a.CanceledSubs {
+		merged.CanceledSubs = append(merged.CanceledSubs, s)
+		subSeen[s.ID] = true
+	}
+	for _, s := range b.CanceledSubs {
+		if !subSeen[s.ID] {
+			merged.CanceledSubs = append(merged.CanceledSubs, s)
+		}
+	}
+
+	// Take the higher revoked token count
+	merged.RevokedTokenCount = a.RevokedTokenCount
+	if b.RevokedTokenCount > merged.RevokedTokenCount {
+		merged.RevokedTokenCount = b.RevokedTokenCount
+	}
+
+	return merged
+}
+
+func applyManifest(ctx context.Context, p *pgxpool.Pool, m *restoreManifest) (deletedUsers, canceledSubs, revokedTokens int) {
+	// Re-delete users that were deleted before the restore
+	for _, u := range m.DeletedUsers {
+		result, err := p.Exec(ctx,
+			`UPDATE users SET deleted_at = $1, updated_at = now()
+			 WHERE id = $2 AND deleted_at IS NULL`, u.DeletedAt, u.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to re-delete user %s: %v\n", u.Email, err)
+			continue
+		}
+		if result.RowsAffected() > 0 {
+			deletedUsers++
+			// Also revoke tokens for re-deleted users
+			if _, err := p.Exec(ctx,
+				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE`,
+				u.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: failed to revoke tokens for %s: %v\n", u.Email, err)
+			}
+		}
+	}
+
+	// Re-cancel subscriptions
+	for _, s := range m.CanceledSubs {
+		result, err := p.Exec(ctx,
+			`UPDATE subscriptions SET status = $1, updated_at = now()
+			 WHERE id = $2 AND status NOT IN ('canceled', 'expired')`, s.Status, s.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to re-cancel sub %s: %v\n", s.ID, err)
+			continue
+		}
+		if result.RowsAffected() > 0 {
+			canceledSubs++
+		}
+	}
+
+	// Re-revoke tokens for all deleted users (catch-all)
+	result, err := p.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked = TRUE
+		 WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL)
+		   AND revoked = FALSE`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: failed to re-revoke tokens: %v\n", err)
+	} else {
+		revokedTokens = int(result.RowsAffected())
+	}
+
+	return
+}
+
+func reconcileStripe(ctx context.Context, p *pgxpool.Pool, stripeKey string) (checked, corrected int, err error) {
+	stripe.Key = stripeKey
+
+	rows, err := p.Query(ctx,
+		`SELECT id, provider_sub_id FROM subscriptions
+		 WHERE provider = 'stripe' AND status = 'active' AND provider_sub_id != ''`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("querying active stripe subs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var subID uuid.UUID
+		var providerSubID string
+		if err := rows.Scan(&subID, &providerSubID); err != nil {
+			continue
+		}
+		checked++
+
+		stripeSub, err := stripesub.Get(providerSubID, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: Stripe API error for %s: %v\n", providerSubID, err)
+			continue
+		}
+
+		var newStatus string
+		switch stripeSub.Status {
+		case stripe.SubscriptionStatusActive, stripe.SubscriptionStatusTrialing:
+			continue // matches
+		case stripe.SubscriptionStatusCanceled:
+			newStatus = "canceled"
+		case stripe.SubscriptionStatusPastDue:
+			newStatus = "past_due"
+		case stripe.SubscriptionStatusUnpaid, stripe.SubscriptionStatusIncompleteExpired:
+			newStatus = "expired"
+		default:
+			newStatus = "canceled"
+		}
+
+		if _, err := p.Exec(ctx,
+			`UPDATE subscriptions SET status = $1, updated_at = now() WHERE id = $2`,
+			newStatus, subID); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to update sub %s: %v\n", subID, err)
+		} else {
+			fmt.Printf("  Corrected: %s → %s (Stripe: %s)\n", providerSubID, newStatus, stripeSub.Status)
+			corrected++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return checked, corrected, fmt.Errorf("iterating rows: %w", err)
+	}
+
+	return checked, corrected, nil
 }
 
 // ============================================================
