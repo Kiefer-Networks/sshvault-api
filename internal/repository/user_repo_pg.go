@@ -76,6 +76,24 @@ func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User,
 	return &user, nil
 }
 
+func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*model.User, error) {
+	query := `
+		SELECT id, email, password, verified, created_at, updated_at, deleted_at
+		FROM users WHERE email = $1 AND deleted_at IS NOT NULL`
+
+	var user model.User
+	err := r.pool.QueryRow(ctx, query, email).Scan(
+		&user.ID, &user.Email, &user.Password, &user.Verified,
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting deleted user by email: %w", err)
+	}
+	return &user, nil
+}
+
 func (r *pgUserRepo) Update(ctx context.Context, user *model.User) error {
 	query := `
 		UPDATE users SET email = $1, password = $2, verified = $3, updated_at = $4

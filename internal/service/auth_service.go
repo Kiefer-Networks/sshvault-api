@@ -132,6 +132,15 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		return nil, fmt.Errorf("email already registered")
 	}
 
+	// Also check for soft-deleted users occupying the email (unique constraint).
+	existingDeleted, err := s.userRepo.GetDeletedByEmail(ctx, req.Email)
+	if err != nil {
+		return nil, fmt.Errorf("checking deleted user: %w", err)
+	}
+	if existingDeleted != nil {
+		return nil, fmt.Errorf("email already registered")
+	}
+
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		return nil, fmt.Errorf("hashing password: %w", err)

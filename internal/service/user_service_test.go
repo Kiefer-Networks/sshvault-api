@@ -73,6 +73,10 @@ func (m *userSvcMockUserRepo) SoftDelete(_ context.Context, id uuid.UUID) error 
 	return nil
 }
 
+func (m *userSvcMockUserRepo) GetDeletedByEmail(_ context.Context, _ string) (*model.User, error) {
+	return nil, nil
+}
+
 func (m *userSvcMockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }
