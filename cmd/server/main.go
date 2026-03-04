@@ -305,8 +305,8 @@ func main() {
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
 	authHandler := handler.NewAuthHandler(authService, auditLogger)
-	vaultHandler := handler.NewVaultHandler(vaultService, billingService, auditLogger)
-	userHandler := handler.NewUserHandler(userService, auditLogger)
+	vaultHandler := handler.NewVaultHandler(vaultService, billingService, deviceRepo, auditLogger)
+	userHandler := handler.NewUserHandler(userService, userRepo, auditLogger)
 	deviceHandler := handler.NewDeviceHandler(deviceRepo, auditLogger)
 	billingHandler := handler.NewBillingHandler(billingService, userService, auditLogger)
 	auditHandler := handler.NewAuditHandler(auditRepo)
@@ -399,6 +399,8 @@ func main() {
 			r.Put("/user", userHandler.UpdateProfile)
 			r.Delete("/user", userHandler.DeleteAccount)
 			r.Put("/user/password", userHandler.ChangePassword)
+			r.Put("/user/avatar", userHandler.UpdateAvatar)
+			r.Delete("/user/avatar", userHandler.DeleteAvatar)
 
 			// Auth (protected)
 			r.Post("/auth/logout-all", authHandler.LogoutAll)

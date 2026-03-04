@@ -122,11 +122,22 @@ func authedRequest(r *http.Request, userID uuid.UUID) *http.Request {
 	return r.WithContext(ctx)
 }
 
+type mockDeviceRepoForVault struct{}
+
+func (m *mockDeviceRepoForVault) Create(_ context.Context, _ *model.Device) error { return nil }
+func (m *mockDeviceRepoForVault) GetByUserID(_ context.Context, _ uuid.UUID) ([]model.Device, error) {
+	return nil, nil
+}
+func (m *mockDeviceRepoForVault) Delete(_ context.Context, _, _ uuid.UUID) error { return nil }
+func (m *mockDeviceRepoForVault) UpdateLastSync(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
 func newVaultHandler(vaultRepo repository.VaultRepository, subRepo repository.SubscriptionRepository, billingEnabled bool) *VaultHandler {
 	vs := service.NewVaultService(vaultRepo, nil, 10, 10)
 	bs := service.NewBillingService(subRepo, &mockBillingProvider{}, billingEnabled)
 	al := newTestAuditLogger()
-	return NewVaultHandler(vs, bs, al)
+	return NewVaultHandler(vs, bs, &mockDeviceRepoForVault{}, al)
 }
 
 func blobChecksum(data []byte) string {

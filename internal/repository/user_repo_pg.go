@@ -22,8 +22,8 @@ func NewUserRepository(pool *pgxpool.Pool) UserRepository {
 
 func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 	query := `
-		INSERT INTO users (id, email, password, verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		INSERT INTO users (id, email, password, verified, avatar, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 	now := time.Now()
 	if user.ID == uuid.Nil {
@@ -33,7 +33,7 @@ func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 	user.UpdatedAt = now
 
 	_, err := r.pool.Exec(ctx, query,
-		user.ID, user.Email, user.Password, user.Verified, user.CreatedAt, user.UpdatedAt)
+		user.ID, user.Email, user.Password, user.Verified, user.Avatar, user.CreatedAt, user.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("creating user: %w", err)
 	}
@@ -42,12 +42,12 @@ func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 
 func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, created_at, updated_at, deleted_at
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at
 		FROM users WHERE id = $1 AND deleted_at IS NULL`
 
 	var user model.User
 	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&user.ID, &user.Email, &user.Password, &user.Verified,
+		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
 		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -60,12 +60,12 @@ func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, er
 
 func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, created_at, updated_at, deleted_at
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at
 		FROM users WHERE email = $1 AND deleted_at IS NULL`
 
 	var user model.User
 	err := r.pool.QueryRow(ctx, query, email).Scan(
-		&user.ID, &user.Email, &user.Password, &user.Verified,
+		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
 		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -78,12 +78,12 @@ func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User,
 
 func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, created_at, updated_at, deleted_at
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at
 		FROM users WHERE email = $1 AND deleted_at IS NOT NULL`
 
 	var user model.User
 	err := r.pool.QueryRow(ctx, query, email).Scan(
-		&user.ID, &user.Email, &user.Password, &user.Verified,
+		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
 		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -96,12 +96,12 @@ func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*mode
 
 func (r *pgUserRepo) Update(ctx context.Context, user *model.User) error {
 	query := `
-		UPDATE users SET email = $1, password = $2, verified = $3, updated_at = $4
-		WHERE id = $5 AND deleted_at IS NULL`
+		UPDATE users SET email = $1, password = $2, verified = $3, avatar = $4, updated_at = $5
+		WHERE id = $6 AND deleted_at IS NULL`
 
 	user.UpdatedAt = time.Now()
 	_, err := conn(ctx, r.pool).Exec(ctx, query,
-		user.Email, user.Password, user.Verified, user.UpdatedAt, user.ID)
+		user.Email, user.Password, user.Verified, user.Avatar, user.UpdatedAt, user.ID)
 	if err != nil {
 		return fmt.Errorf("updating user: %w", err)
 	}

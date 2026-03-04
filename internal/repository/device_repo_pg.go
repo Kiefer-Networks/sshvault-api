@@ -38,7 +38,7 @@ func (r *pgDeviceRepo) Create(ctx context.Context, device *model.Device) error {
 
 func (r *pgDeviceRepo) GetByUserID(ctx context.Context, userID uuid.UUID) ([]model.Device, error) {
 	query := `
-		SELECT id, user_id, name, platform, last_sync, created_at
+		SELECT id, user_id, name, platform, last_sync, last_ip, last_seen, created_at
 		FROM devices WHERE user_id = $1 ORDER BY created_at DESC`
 
 	rows, err := r.pool.Query(ctx, query, userID)
@@ -50,7 +50,7 @@ func (r *pgDeviceRepo) GetByUserID(ctx context.Context, userID uuid.UUID) ([]mod
 	var devices []model.Device
 	for rows.Next() {
 		var d model.Device
-		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.Platform, &d.LastSync, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.Platform, &d.LastSync, &d.LastIP, &d.LastSeen, &d.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning device: %w", err)
 		}
 		devices = append(devices, d)
@@ -70,9 +70,10 @@ func (r *pgDeviceRepo) Delete(ctx context.Context, id, userID uuid.UUID) error {
 	return nil
 }
 
-func (r *pgDeviceRepo) UpdateLastSync(ctx context.Context, id uuid.UUID) error {
-	query := `UPDATE devices SET last_sync = $1 WHERE id = $2`
-	_, err := r.pool.Exec(ctx, query, time.Now(), id)
+func (r *pgDeviceRepo) UpdateLastSync(ctx context.Context, id uuid.UUID, ip string) error {
+	now := time.Now()
+	query := `UPDATE devices SET last_sync = $1, last_ip = $2, last_seen = $3 WHERE id = $4`
+	_, err := r.pool.Exec(ctx, query, now, ip, now, id)
 	if err != nil {
 		return fmt.Errorf("updating last sync: %w", err)
 	}

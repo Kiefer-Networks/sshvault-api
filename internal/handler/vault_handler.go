@@ -5,20 +5,25 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/kiefernetworks/shellvault-server/internal/audit"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
+	"github.com/rs/zerolog/log"
 )
 
 type VaultHandler struct {
 	vaultService   *service.VaultService
 	billingService *service.BillingService
+	deviceRepo     repository.DeviceRepository
 	audit          *audit.Logger
 }
 
-func NewVaultHandler(vaultService *service.VaultService, billingService *service.BillingService, auditLogger *audit.Logger) *VaultHandler {
+func NewVaultHandler(vaultService *service.VaultService, billingService *service.BillingService, deviceRepo repository.DeviceRepository, auditLogger *audit.Logger) *VaultHandler {
 	return &VaultHandler{
 		vaultService:   vaultService,
 		billingService: billingService,
+		deviceRepo:     deviceRepo,
 		audit:          auditLogger,
 	}
 }
@@ -40,6 +45,7 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.trackDevice(r)
 	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPull).
 		Resource("vault", userID.String()).
 		Send()
@@ -88,6 +94,7 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.trackDevice(r)
 	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPush).
 		Resource("vault", userID.String()).
 		Detail("version", req.Version).
@@ -135,4 +142,18 @@ func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request)
 		Detail("version", version).
 		Send()
 	respondJSON(w, http.StatusOK, resp)
+}
+
+func (h *VaultHandler) trackDevice(r *http.Request) {
+	deviceIDStr := r.Header.Get("X-Device-ID")
+	if deviceIDStr == "" {
+		return
+	}
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		return
+	}
+	if err := h.deviceRepo.UpdateLastSync(r.Context(), deviceID, r.RemoteAddr); err != nil {
+		log.Warn().Err(err).Str("device_id", deviceIDStr).Msg("failed to track device sync")
+	}
 }

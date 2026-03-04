@@ -4,16 +4,18 @@ import (
 	"net/http"
 
 	"github.com/kiefernetworks/shellvault-server/internal/audit"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
 type UserHandler struct {
 	userService *service.UserService
+	userRepo    repository.UserRepository
 	audit       *audit.Logger
 }
 
-func NewUserHandler(userService *service.UserService, auditLogger *audit.Logger) *UserHandler {
-	return &UserHandler{userService: userService, audit: auditLogger}
+func NewUserHandler(userService *service.UserService, userRepo repository.UserRepository, auditLogger *audit.Logger) *UserHandler {
+	return &UserHandler{userService: userService, userRepo: userRepo, audit: auditLogger}
 }
 
 func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
@@ -108,4 +110,63 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	h.audit.LogFromRequest(r, audit.CatUser, audit.ActPasswordChange).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
+}
+
+const maxAvatarBase64Size = 512 * 1024 // 512 KB base64
+
+func (h *UserHandler) UpdateAvatar(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Avatar string `json:"avatar"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if len(req.Avatar) > maxAvatarBase64Size {
+		respondError(w, http.StatusRequestEntityTooLarge, "avatar must be at most 512 KB")
+		return
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		respondError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	user.Avatar = req.Avatar
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to update avatar")
+		return
+	}
+
+	h.audit.LogFromRequest(r, audit.CatUser, audit.ActProfileUpdate).Send()
+	respondJSON(w, http.StatusOK, user)
+}
+
+func (h *UserHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	user, err := h.userRepo.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		respondError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	user.Avatar = ""
+	if err := h.userRepo.Update(r.Context(), user); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to delete avatar")
+		return
+	}
+
+	h.audit.LogFromRequest(r, audit.CatUser, audit.ActProfileUpdate).Send()
+	respondJSON(w, http.StatusOK, map[string]string{"status": "avatar deleted"})
 }

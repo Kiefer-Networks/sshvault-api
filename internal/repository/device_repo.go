@@ -11,5 +11,5 @@ type DeviceRepository interface {
 	Create(ctx context.Context, device *model.Device) error
 	GetByUserID(ctx context.Context, userID uuid.UUID) ([]model.Device, error)
 	Delete(ctx context.Context, id, userID uuid.UUID) error
-	UpdateLastSync(ctx context.Context, id uuid.UUID) error
+	UpdateLastSync(ctx context.Context, id uuid.UUID, ip string) error
 }

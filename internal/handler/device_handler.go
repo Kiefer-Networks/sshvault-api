@@ -67,11 +67,7 @@ func (h *DeviceHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	h.audit.LogFromRequest(r, audit.CatDevice, audit.ActDeviceRegister).
 		Resource("device", device.ID.String()).
 		Send()
-	respondJSON(w, http.StatusCreated, map[string]any{
-		"id":       device.ID,
-		"name":     device.Name,
-		"platform": device.Platform,
-	})
+	respondJSON(w, http.StatusCreated, device)
 }
 
 func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
