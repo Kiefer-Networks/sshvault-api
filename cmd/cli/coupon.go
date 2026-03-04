@@ -30,7 +30,6 @@ func couponCreateCmd() *cobra.Command {
 		code     string
 		gSync    bool
 		days     int
-		gTele    bool
 		maxUses  int
 		expires  string
 		note     string
@@ -40,8 +39,8 @@ func couponCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a new coupon code",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !gSync && !gTele {
-				return fmt.Errorf("specify at least --sync or --teleport")
+			if !gSync {
+				return fmt.Errorf("specify --sync")
 			}
 
 			if code == "" {
@@ -66,9 +65,9 @@ func couponCreateCmd() *cobra.Command {
 			}
 
 			_, err := pool.Exec(ctx, `
-				INSERT INTO coupons (code, grant_sync, grant_teleport, sync_days, max_uses, expires_at, created_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				code, gSync, gTele, days, maxUses, expiresAt, note)
+				INSERT INTO coupons (code, grant_sync, sync_days, max_uses, expires_at, created_by)
+				VALUES ($1, $2, $3, $4, $5, $6)`,
+				code, gSync, days, maxUses, expiresAt, note)
 			if err != nil {
 				return fmt.Errorf("creating coupon: %w", err)
 			}
@@ -80,7 +79,6 @@ func couponCreateCmd() *cobra.Command {
 				fmt.Printf(" (%d days)", days)
 			}
 			fmt.Println()
-			fmt.Printf("  Teleport:   %v\n", gTele)
 			fmt.Printf("  Max Uses:   %d\n", maxUses)
 			if expiresAt != nil {
 				fmt.Printf("  Expires:    %s\n", expiresAt.Format("2006-01-02"))
@@ -97,7 +95,6 @@ func couponCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&code, "code", "", "Coupon code (auto-generated if empty)")
 	cmd.Flags().BoolVar(&gSync, "sync", false, "Grant sync subscription")
 	cmd.Flags().IntVar(&days, "days", 365, "Sync subscription duration in days")
-	cmd.Flags().BoolVar(&gTele, "teleport", false, "Grant Teleport addon")
 	cmd.Flags().IntVar(&maxUses, "uses", 1, "Maximum number of redemptions")
 	cmd.Flags().StringVar(&expires, "expires", "", "Expiration date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&note, "note", "", "Admin note (created_by)")
@@ -113,23 +110,22 @@ func couponListCmd() *cobra.Command {
 			ctx := context.Background()
 
 			rows, err := pool.Query(ctx, `
-				SELECT code, grant_sync, grant_teleport, sync_days, max_uses, used_count, expires_at, created_at, created_by
+				SELECT code, grant_sync, sync_days, max_uses, used_count, expires_at, created_at, created_by
 				FROM coupons ORDER BY created_at DESC`)
 			if err != nil {
 				return fmt.Errorf("query: %w", err)
 			}
 			defer rows.Close()
 
-			fmt.Printf("%-12s  %-6s  %-8s  %-5s  %-10s  %-12s  %-20s  %s\n",
-				"CODE", "SYNC", "TELEPORT", "DAYS", "USES", "EXPIRES", "CREATED", "NOTE")
-			fmt.Println(strings.Repeat("─", 110))
+			fmt.Printf("%-12s  %-6s  %-5s  %-10s  %-12s  %-20s  %s\n",
+				"CODE", "SYNC", "DAYS", "USES", "EXPIRES", "CREATED", "NOTE")
+			fmt.Println(strings.Repeat("─", 100))
 
 			count := 0
 			for rows.Next() {
 				var (
 					c          string
 					gSync      bool
-					gTele      bool
 					syncDays   int
 					maxUses    int
 					usedCount  int
@@ -137,7 +133,7 @@ func couponListCmd() *cobra.Command {
 					createdAt  time.Time
 					createdBy  string
 				)
-				if err := rows.Scan(&c, &gSync, &gTele, &syncDays, &maxUses, &usedCount, &expiresAt, &createdAt, &createdBy); err != nil {
+				if err := rows.Scan(&c, &gSync, &syncDays, &maxUses, &usedCount, &expiresAt, &createdAt, &createdBy); err != nil {
 					return fmt.Errorf("scan: %w", err)
 				}
 
@@ -151,8 +147,8 @@ func couponListCmd() *cobra.Command {
 
 				usesStr := fmt.Sprintf("%d/%d", usedCount, maxUses)
 
-				fmt.Printf("%-12s  %-6v  %-8v  %-5d  %-10s  %-12s  %-20s  %s\n",
-					c, gSync, gTele, syncDays, usesStr, expStr,
+				fmt.Printf("%-12s  %-6v  %-5d  %-10s  %-12s  %-20s  %s\n",
+					c, gSync, syncDays, usesStr, expStr,
 					createdAt.Format("2006-01-02 15:04"), truncate(createdBy, 20))
 				count++
 			}
@@ -177,7 +173,6 @@ func couponInfoCmd() *cobra.Command {
 			var (
 				id         string
 				gSync      bool
-				gTele      bool
 				syncDays   int
 				maxUses    int
 				usedCount  int
@@ -186,9 +181,9 @@ func couponInfoCmd() *cobra.Command {
 				createdBy  string
 			)
 			err := pool.QueryRow(ctx, `
-				SELECT id, grant_sync, grant_teleport, sync_days, max_uses, used_count, expires_at, created_at, created_by
+				SELECT id, grant_sync, sync_days, max_uses, used_count, expires_at, created_at, created_by
 				FROM coupons WHERE code = $1`, code).
-				Scan(&id, &gSync, &gTele, &syncDays, &maxUses, &usedCount, &expiresAt, &createdAt, &createdBy)
+				Scan(&id, &gSync, &syncDays, &maxUses, &usedCount, &expiresAt, &createdAt, &createdBy)
 			if err != nil {
 				return fmt.Errorf("coupon not found: %s", code)
 			}
@@ -199,7 +194,6 @@ func couponInfoCmd() *cobra.Command {
 			if gSync {
 				fmt.Printf("  Days:     %d\n", syncDays)
 			}
-			fmt.Printf("Teleport:   %v\n", gTele)
 			fmt.Printf("Uses:       %d / %d\n", usedCount, maxUses)
 			if expiresAt != nil {
 				expStr := expiresAt.Format("2006-01-02 15:04")

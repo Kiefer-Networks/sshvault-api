@@ -29,9 +29,9 @@ func (r *Repository) Create(ctx context.Context, c *Coupon) error {
 	c.CreatedAt = time.Now()
 
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO coupons (id, code, grant_sync, grant_teleport, sync_days, max_uses, used_count, expires_at, created_at, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		c.ID, c.Code, c.GrantSync, c.GrantTeleport, c.SyncDays, c.MaxUses, c.UsedCount, c.ExpiresAt, c.CreatedAt, c.CreatedBy)
+		INSERT INTO coupons (id, code, grant_sync, sync_days, max_uses, used_count, expires_at, created_at, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		c.ID, c.Code, c.GrantSync, c.SyncDays, c.MaxUses, c.UsedCount, c.ExpiresAt, c.CreatedAt, c.CreatedBy)
 	if err != nil {
 		return fmt.Errorf("creating coupon: %w", err)
 	}
@@ -42,9 +42,9 @@ func (r *Repository) Create(ctx context.Context, c *Coupon) error {
 func (r *Repository) GetByCode(ctx context.Context, code string) (*Coupon, error) {
 	var c Coupon
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, code, grant_sync, grant_teleport, sync_days, max_uses, used_count, expires_at, created_at, created_by
+		SELECT id, code, grant_sync, sync_days, max_uses, used_count, expires_at, created_at, created_by
 		FROM coupons WHERE code = $1`, code).
-		Scan(&c.ID, &c.Code, &c.GrantSync, &c.GrantTeleport, &c.SyncDays, &c.MaxUses, &c.UsedCount, &c.ExpiresAt, &c.CreatedAt, &c.CreatedBy)
+		Scan(&c.ID, &c.Code, &c.GrantSync, &c.SyncDays, &c.MaxUses, &c.UsedCount, &c.ExpiresAt, &c.CreatedAt, &c.CreatedBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -57,7 +57,7 @@ func (r *Repository) GetByCode(ctx context.Context, code string) (*Coupon, error
 // List returns all coupons ordered by creation date.
 func (r *Repository) List(ctx context.Context) ([]Coupon, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, code, grant_sync, grant_teleport, sync_days, max_uses, used_count, expires_at, created_at, created_by
+		SELECT id, code, grant_sync, sync_days, max_uses, used_count, expires_at, created_at, created_by
 		FROM coupons ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing coupons: %w", err)
@@ -67,7 +67,7 @@ func (r *Repository) List(ctx context.Context) ([]Coupon, error) {
 	var coupons []Coupon
 	for rows.Next() {
 		var c Coupon
-		if err := rows.Scan(&c.ID, &c.Code, &c.GrantSync, &c.GrantTeleport, &c.SyncDays, &c.MaxUses, &c.UsedCount, &c.ExpiresAt, &c.CreatedAt, &c.CreatedBy); err != nil {
+		if err := rows.Scan(&c.ID, &c.Code, &c.GrantSync, &c.SyncDays, &c.MaxUses, &c.UsedCount, &c.ExpiresAt, &c.CreatedAt, &c.CreatedBy); err != nil {
 			return nil, fmt.Errorf("scanning coupon: %w", err)
 		}
 		coupons = append(coupons, c)

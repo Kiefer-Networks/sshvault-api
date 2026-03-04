@@ -59,7 +59,6 @@ func (h *Handler) Redeem(w http.ResponseWriter, r *http.Request) {
 	h.audit.LogFromRequest(r, audit.CatBilling, audit.ActCouponRedeem).
 		Detail("code", code).
 		Detail("sync_granted", result.SyncGranted).
-		Detail("teleport_granted", result.TeleportGranted).
 		Detail("sync_days", result.SyncDays).
 		Send()
 

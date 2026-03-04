@@ -11,7 +11,6 @@ type Coupon struct {
 	ID            uuid.UUID  `json:"id"`
 	Code          string     `json:"code"`
 	GrantSync     bool       `json:"grant_sync"`
-	GrantTeleport bool       `json:"grant_teleport"`
 	SyncDays      int        `json:"sync_days"`
 	MaxUses       int        `json:"max_uses"`
 	UsedCount     int        `json:"used_count"`
@@ -30,7 +29,6 @@ type Redemption struct {
 
 // RedeemResult is returned to the client after a successful redemption.
 type RedeemResult struct {
-	SyncGranted     bool `json:"sync_granted"`
-	TeleportGranted bool `json:"teleport_granted"`
-	SyncDays        int  `json:"sync_days"`
+	SyncGranted bool `json:"sync_granted"`
+	SyncDays    int  `json:"sync_days"`
 }

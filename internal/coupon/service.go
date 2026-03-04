@@ -32,9 +32,9 @@ func (s *Service) Redeem(ctx context.Context, userID uuid.UUID, code string) (*R
 	// Lock the coupon row for update to prevent race conditions.
 	var c Coupon
 	err = tx.QueryRow(ctx, `
-		SELECT id, code, grant_sync, grant_teleport, sync_days, max_uses, used_count, expires_at
+		SELECT id, code, grant_sync, sync_days, max_uses, used_count, expires_at
 		FROM coupons WHERE code = $1 FOR UPDATE`, code).
-		Scan(&c.ID, &c.Code, &c.GrantSync, &c.GrantTeleport, &c.SyncDays, &c.MaxUses, &c.UsedCount, &c.ExpiresAt)
+		Scan(&c.ID, &c.Code, &c.GrantSync, &c.SyncDays, &c.MaxUses, &c.UsedCount, &c.ExpiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("coupon not found")
 	}
@@ -107,23 +107,12 @@ func (s *Service) Redeem(ctx context.Context, userID uuid.UUID, code string) (*R
 		}
 	}
 
-	// Apply teleport grant.
-	if c.GrantTeleport {
-		_, err = tx.Exec(ctx, `
-			UPDATE users SET teleport_unlocked = true, updated_at = now()
-			WHERE id = $1 AND deleted_at IS NULL`, userID)
-		if err != nil {
-			return nil, fmt.Errorf("unlocking teleport: %w", err)
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("committing redemption: %w", err)
 	}
 
 	return &RedeemResult{
-		SyncGranted:     c.GrantSync,
-		TeleportGranted: c.GrantTeleport,
-		SyncDays:        c.SyncDays,
+		SyncGranted: c.GrantSync,
+		SyncDays:    c.SyncDays,
 	}, nil
 }

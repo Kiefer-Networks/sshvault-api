@@ -27,7 +27,6 @@ func userCmd() *cobra.Command {
 	cmd.AddCommand(userDeleteDeviceCmd())
 	cmd.AddCommand(userAuditCmd())
 	cmd.AddCommand(userResetVaultCmd())
-	cmd.AddCommand(userTeleportCmd())
 
 	return cmd
 }
@@ -140,18 +139,6 @@ func userInfoCmd() *cobra.Command {
 					}
 				}
 				fmt.Printf("  Created:      %s\n", subCreatedAt.Format(time.RFC3339))
-			}
-
-			// Teleport
-			var teleportUnlocked bool
-			err = pool.QueryRow(ctx,
-				`SELECT teleport_unlocked FROM users WHERE id = $1`, user.id).
-				Scan(&teleportUnlocked)
-			fmt.Println("\nTeleport:")
-			if err != nil {
-				fmt.Println("  (unknown)")
-			} else {
-				fmt.Printf("  Unlocked: %v\n", teleportUnlocked)
 			}
 
 			// Vault
@@ -493,47 +480,6 @@ func userAuditCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Number of entries to show")
-	return cmd
-}
-
-func userTeleportCmd() *cobra.Command {
-	var unlock, lock bool
-	cmd := &cobra.Command{
-		Use:   "teleport <email-or-id>",
-		Short: "Manage Teleport addon access for a user",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !unlock && !lock {
-				return fmt.Errorf("specify --unlock or --lock")
-			}
-			if unlock && lock {
-				return fmt.Errorf("--unlock and --lock are mutually exclusive")
-			}
-
-			ctx := context.Background()
-			user, err := findUser(ctx, args[0])
-			if err != nil {
-				return err
-			}
-
-			value := unlock
-			_, err = pool.Exec(ctx,
-				`UPDATE users SET teleport_unlocked = $1, updated_at = now() WHERE id = $2 AND deleted_at IS NULL`,
-				value, user.id)
-			if err != nil {
-				return fmt.Errorf("updating teleport status: %w", err)
-			}
-
-			status := "locked"
-			if value {
-				status = "unlocked"
-			}
-			fmt.Printf("Teleport %s for %s (%s).\n", status, user.email, user.id)
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&unlock, "unlock", false, "Unlock Teleport for user")
-	cmd.Flags().BoolVar(&lock, "lock", false, "Lock Teleport for user")
 	return cmd
 }
 

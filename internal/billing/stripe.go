@@ -25,82 +25,24 @@ type StripeProvider struct {
 	secretKey          string
 	webhookSecret      string
 	priceID            string
-	teleportPriceID    string
 	apiBaseURL         string
 	subRepo            repository.SubscriptionRepository
 	mailer             mail.Mailer
-	onAddonPurchase    func(ctx context.Context, userID, productType string) error
 }
 
-func NewStripeProvider(secretKey, webhookSecret, priceID, teleportPriceID, apiBaseURL string, subRepo repository.SubscriptionRepository, mailer mail.Mailer) *StripeProvider {
+func NewStripeProvider(secretKey, webhookSecret, priceID, apiBaseURL string, subRepo repository.SubscriptionRepository, mailer mail.Mailer) *StripeProvider {
 	stripe.Key = secretKey
 	if apiBaseURL == "" {
 		apiBaseURL = "https://api.sshvault.app"
 	}
 	return &StripeProvider{
-		secretKey:       secretKey,
-		webhookSecret:   webhookSecret,
-		priceID:         priceID,
-		teleportPriceID: teleportPriceID,
-		apiBaseURL:       apiBaseURL,
-		subRepo:         subRepo,
-		mailer:          mailer,
+		secretKey:     secretKey,
+		webhookSecret: webhookSecret,
+		priceID:       priceID,
+		apiBaseURL:    apiBaseURL,
+		subRepo:       subRepo,
+		mailer:        mailer,
 	}
-}
-
-// SetAddonPurchaseHandler sets a callback that is invoked when a one-time
-// addon purchase (e.g. teleport_addon) completes via Stripe webhook.
-func (p *StripeProvider) SetAddonPurchaseHandler(fn func(ctx context.Context, userID, productType string) error) {
-	p.onAddonPurchase = fn
-}
-
-// CreateTeleportCheckoutSession creates a one-time payment checkout session
-// for the Teleport addon.
-func (p *StripeProvider) CreateTeleportCheckoutSession(ctx context.Context, userID, email string) (string, error) {
-	if p.teleportPriceID == "" {
-		return "", fmt.Errorf("teleport addon price not configured")
-	}
-
-	custParams := &stripe.CustomerParams{
-		Email: stripe.String(email),
-	}
-	custParams.AddMetadata("shellvault_user_id", userID)
-	cust, err := stripecustomer.New(custParams)
-	if err != nil {
-		return "", fmt.Errorf("creating stripe customer: %w", err)
-	}
-
-	params := &stripe.CheckoutSessionParams{
-		Mode:     stripe.String(string(stripe.CheckoutSessionModePayment)),
-		Customer: stripe.String(cust.ID),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{
-			{
-				Price:    stripe.String(p.teleportPriceID),
-				Quantity: stripe.Int64(1),
-			},
-		},
-		BillingAddressCollection: stripe.String("auto"),
-		CustomerUpdate: &stripe.CheckoutSessionCustomerUpdateParams{
-			Name:    stripe.String("auto"),
-			Address: stripe.String("auto"),
-		},
-		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
-			Enabled: stripe.Bool(true),
-		},
-		SuccessURL: stripe.String(p.apiBaseURL + "/v1/billing/success?session_id={CHECKOUT_SESSION_ID}"),
-		CancelURL:  stripe.String(p.apiBaseURL + "/v1/billing/cancel"),
-		Metadata: map[string]string{
-			"user_id":      userID,
-			"product_type": "teleport_addon",
-		},
-	}
-
-	s, err := session.New(params)
-	if err != nil {
-		return "", fmt.Errorf("creating checkout session: %w", err)
-	}
-
-	return s.URL, nil
 }
 
 func (p *StripeProvider) CreateCheckoutSession(ctx context.Context, userID, email string) (string, error) {
@@ -289,16 +231,6 @@ func (p *StripeProvider) handleCheckoutCompleted(ctx context.Context, raw json.R
 	userID := data.Metadata["user_id"]
 	if userID == "" {
 		return fmt.Errorf("missing user_id in metadata")
-	}
-
-	// Handle one-time addon purchases (e.g. teleport_addon)
-	productType := data.Metadata["product_type"]
-	if productType != "" && p.onAddonPurchase != nil {
-		if err := p.onAddonPurchase(ctx, userID, productType); err != nil {
-			return fmt.Errorf("handling addon purchase %s: %w", productType, err)
-		}
-		p.sendConfirmationEmail(data.CustomerDetails.Email, data.CustomerEmail)
-		return nil
 	}
 
 	// Handle subscription checkout

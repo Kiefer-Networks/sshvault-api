@@ -52,7 +52,6 @@ type BillingConfig struct {
 	StripeSecretKey            string `envconfig:"STRIPE_SECRET_KEY"`
 	StripeWebhookSecret        string `envconfig:"STRIPE_WEBHOOK_SECRET"`
 	StripePriceID              string `envconfig:"STRIPE_PRICE_ID"`
-	StripeTeleportAddonPriceID string `envconfig:"STRIPE_TELEPORT_ADDON_PRICE_ID"`
 	AppleKeyPath          string `envconfig:"APPLE_KEY_PATH"`
 	AppleKeyID            string `envconfig:"APPLE_KEY_ID"`
 	AppleIssuerID         string `envconfig:"APPLE_ISSUER_ID"`
