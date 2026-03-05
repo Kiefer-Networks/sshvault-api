@@ -153,7 +153,8 @@ func (h *VaultHandler) trackDevice(r *http.Request) {
 	if err != nil {
 		return
 	}
-	if err := h.deviceRepo.UpdateLastSync(r.Context(), deviceID, r.RemoteAddr); err != nil {
+	ip := clientIP(r)
+	if err := h.deviceRepo.UpdateLastSync(r.Context(), deviceID, ip); err != nil {
 		log.Warn().Err(err).Str("device_id", deviceIDStr).Msg("failed to track device sync")
 	}
 }

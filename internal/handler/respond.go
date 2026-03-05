@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -34,6 +35,15 @@ func decodeJSON(r *http.Request, v any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(v)
+}
+
+// clientIP extracts the IP address from r.RemoteAddr, stripping the port.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // requireUserID extracts the authenticated user ID from the request context.
