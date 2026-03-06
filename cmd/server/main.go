@@ -293,6 +293,7 @@ func main() {
 	r.Use(cors.Handler(mw.CORSOptions(cfg.Server.CORSOrigins)))
 	r.Use(chimiddleware.Compress(5))
 	r.Use(mw.ResponsePadding)
+	r.Use(mw.RequireJSONContentType)
 
 	// System routes
 	r.Get("/health", healthHandler.Health)
