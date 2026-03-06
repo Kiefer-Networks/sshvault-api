@@ -355,12 +355,26 @@ func main() {
 	r.Get("/health", healthHandler.Health)
 	r.Get("/ready", healthHandler.Ready)
 
-	// Swagger UI
-	r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "api/docs.html")
-	})
-	r.Get("/docs/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "api/openapi.yaml")
+	// Swagger UI — relaxed CSP for external CDN assets
+	r.Route("/docs", func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Security-Policy",
+					"default-src 'none'; "+
+						"script-src 'unsafe-inline' https://unpkg.com; "+
+						"style-src 'unsafe-inline' https://unpkg.com; "+
+						"img-src 'self' data:; "+
+						"font-src https://unpkg.com; "+
+						"connect-src 'self'")
+				next.ServeHTTP(w, r)
+			})
+		})
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "api/docs.html")
+		})
+		r.Get("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "api/openapi.yaml")
+		})
 	})
 
 	// API v1
