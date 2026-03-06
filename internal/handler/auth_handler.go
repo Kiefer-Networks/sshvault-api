@@ -84,7 +84,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.IP = r.RemoteAddr
+	req.IP = clientIP(r)
 
 	resp, err := h.authService.Login(r.Context(), &req)
 	if err != nil {

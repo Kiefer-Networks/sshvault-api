@@ -110,6 +110,15 @@ func (m *mockTokenRepo) RevokeAllForUser(_ context.Context, userID uuid.UUID) er
 	return nil
 }
 
+func (m *mockTokenRepo) ConsumeRefreshToken(_ context.Context, tokenHash string) (*model.RefreshToken, error) {
+	t, ok := m.hashIndex[tokenHash]
+	if !ok || t.Revoked || t.ExpiresAt.Before(time.Now()) {
+		return nil, nil
+	}
+	t.Revoked = true
+	return t, nil
+}
+
 func (m *mockTokenRepo) DeleteExpired(_ context.Context) (int64, error) { return 0, nil }
 
 type mockVerifyRepo struct {

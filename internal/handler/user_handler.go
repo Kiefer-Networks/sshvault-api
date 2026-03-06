@@ -103,6 +103,11 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.NewPassword) > MaxPasswordLength {
+		respondError(w, http.StatusBadRequest, "password must be at most 256 characters")
+		return
+	}
+
 	if err := h.userService.ChangePassword(r.Context(), userID, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "failed to change password")
 		return

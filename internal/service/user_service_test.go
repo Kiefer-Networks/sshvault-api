@@ -128,6 +128,10 @@ func (m *userSvcMockTokenRepo) RevokeAllForUser(_ context.Context, userID uuid.U
 	return nil
 }
 
+func (m *userSvcMockTokenRepo) ConsumeRefreshToken(_ context.Context, _ string) (*model.RefreshToken, error) {
+	return nil, nil
+}
+
 func (m *userSvcMockTokenRepo) DeleteExpired(_ context.Context) (int64, error) { return 0, nil }
 
 // --- Helpers ---

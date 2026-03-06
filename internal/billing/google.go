@@ -117,6 +117,10 @@ func (p *GoogleProvider) HandleWebhook(ctx context.Context, payload, _ string) e
 		return fmt.Errorf("parsing notification: %w", err)
 	}
 
+	if notification.PackageName != p.packageName {
+		return fmt.Errorf("package name mismatch: expected %s", p.packageName)
+	}
+
 	// Only handle subscription notifications
 	if notification.SubscriptionNotification == nil {
 		log.Info().Msg("ignoring non-subscription Google notification")

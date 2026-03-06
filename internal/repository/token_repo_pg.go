@@ -57,6 +57,26 @@ func (r *pgTokenRepo) GetByHash(ctx context.Context, tokenHash string) (*model.R
 	return &token, nil
 }
 
+func (r *pgTokenRepo) ConsumeRefreshToken(ctx context.Context, tokenHash string) (*model.RefreshToken, error) {
+	query := `
+		UPDATE refresh_tokens
+		SET revoked = TRUE
+		WHERE token_hash = $1 AND NOT revoked AND expires_at > NOW()
+		RETURNING id, user_id, token_hash, device_name, expires_at, created_at, revoked`
+
+	var token model.RefreshToken
+	err := r.pool.QueryRow(ctx, query, tokenHash).Scan(
+		&token.ID, &token.UserID, &token.TokenHash, &token.DeviceName,
+		&token.ExpiresAt, &token.CreatedAt, &token.Revoked)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("consuming refresh token: %w", err)
+	}
+	return &token, nil
+}
+
 func (r *pgTokenRepo) Revoke(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE refresh_tokens SET revoked = TRUE WHERE id = $1`
 	_, err := r.pool.Exec(ctx, query, id)

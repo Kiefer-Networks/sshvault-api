@@ -84,6 +84,10 @@ func (m *mockTokenRepo) RevokeAllForUser(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
+func (m *mockTokenRepo) ConsumeRefreshToken(_ context.Context, _ string) (*model.RefreshToken, error) {
+	return nil, nil
+}
+
 func (m *mockTokenRepo) DeleteExpired(_ context.Context) (int64, error) {
 	return 0, nil
 }

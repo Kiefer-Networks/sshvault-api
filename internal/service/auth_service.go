@@ -239,18 +239,15 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthResponse, error) {
 	hash := auth.HashToken(req.RefreshToken)
 
-	stored, err := s.tokenRepo.GetByHash(ctx, hash)
+	// Atomically revoke and return the token to prevent race conditions
+	// where two concurrent requests could both consume the same token.
+	stored, err := s.tokenRepo.ConsumeRefreshToken(ctx, hash)
 	if err != nil {
-		return nil, fmt.Errorf("finding refresh token: %w", err)
+		return nil, fmt.Errorf("consuming refresh token: %w", err)
 	}
-	if stored == nil || stored.Revoked || time.Now().After(stored.ExpiresAt) {
-		log.Warn().Msg("refresh failed: invalid or expired token")
+	if stored == nil {
+		log.Warn().Msg("refresh failed: invalid, expired, or already consumed token")
 		return nil, fmt.Errorf("invalid or expired refresh token")
-	}
-
-	// Revoke old token (single-use rotation)
-	if err := s.tokenRepo.Revoke(ctx, stored.ID); err != nil {
-		return nil, fmt.Errorf("revoking old token: %w", err)
 	}
 
 	user, err := s.userRepo.GetByID(ctx, stored.UserID)
