@@ -15,7 +15,13 @@ servers:
 
 tags:
   - name: Auth
-    description: Authentication and registration
+    description: |
+      Authentication and registration.
+
+      **Proof of Work (PoW)** — Register and Login require a solved PoW challenge.
+      Flow: `GET /v1/auth/challenge` → solve locally → send solution via `X-PoW-Challenge` and `X-PoW-Nonce` headers.
+
+      Algorithm: Find a nonce such that `SHA-256(challenge + nonce)` has at least `difficulty` leading zero bits.
   - name: Vault
     description: Encrypted vault sync
   - name: User
@@ -56,11 +62,40 @@ paths:
         "503":
           description: Database not ready
 
+  /v1/auth/challenge:
+    get:
+      tags: [Auth]
+      summary: Get PoW challenge
+      description: |
+        Returns a Proof-of-Work challenge that must be solved before calling `/register` or `/login`.
+
+        **How to solve:**
+        1. Increment a nonce starting from 0
+        2. Compute `SHA-256(challenge + nonce)` (string concatenation, nonce as decimal string)
+        3. Count leading zero **bits** of the hash
+        4. If leading zero bits >= `difficulty`, the solution is valid
+
+        Challenges expire after 2 minutes and can only be used once.
+      operationId: getChallenge
+      responses:
+        "200":
+          description: PoW challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PowChallenge"
+        "503":
+          description: Server at capacity, try again later
+
   /v1/auth/register:
     post:
       tags: [Auth]
       summary: Register new account
+      description: Requires a solved PoW challenge. Get one from `GET /v1/auth/challenge` first.
       operationId: register
+      parameters:
+        - $ref: "#/components/parameters/PowChallenge"
+        - $ref: "#/components/parameters/PowNonce"
       requestBody:
         required: true
         content:
@@ -84,12 +119,20 @@ paths:
                 $ref: "#/components/schemas/AuthResponse"
         "409":
           description: Email already registered
+        "428":
+          description: Proof of work required (missing X-PoW headers)
+        "403":
+          description: Invalid or expired proof of work
 
   /v1/auth/login:
     post:
       tags: [Auth]
       summary: Login with email and password
+      description: Requires a solved PoW challenge. Get one from `GET /v1/auth/challenge` first.
       operationId: login
+      parameters:
+        - $ref: "#/components/parameters/PowChallenge"
+        - $ref: "#/components/parameters/PowNonce"
       requestBody:
         required: true
         content:
@@ -114,6 +157,10 @@ paths:
                 $ref: "#/components/schemas/AuthResponse"
         "401":
           description: Invalid credentials
+        "428":
+          description: Proof of work required (missing X-PoW headers)
+        "403":
+          description: Invalid or expired proof of work
 
   /v1/auth/refresh:
     post:
@@ -583,7 +630,42 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+  parameters:
+    PowChallenge:
+      name: X-PoW-Challenge
+      in: header
+      required: true
+      description: The challenge string from `GET /v1/auth/challenge`
+      schema:
+        type: string
+        example: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
+    PowNonce:
+      name: X-PoW-Nonce
+      in: header
+      required: true
+      description: The nonce that solves the challenge (decimal string)
+      schema:
+        type: string
+        example: "48291"
+
   schemas:
+    PowChallenge:
+      type: object
+      properties:
+        challenge:
+          type: string
+          description: Hex-encoded 32-byte random challenge
+          example: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
+        difficulty:
+          type: integer
+          description: Required number of leading zero bits in SHA-256(challenge + nonce)
+          example: 16
+        expires_at:
+          type: integer
+          format: int64
+          description: Unix timestamp when this challenge expires (2 min TTL)
+          example: 1741170120
+
     AuthResponse:
       type: object
       properties:
