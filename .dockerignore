@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.md
+LICENSE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+tmp/
+backups/
+keys/
+logs/
+docker/docker-compose.yml

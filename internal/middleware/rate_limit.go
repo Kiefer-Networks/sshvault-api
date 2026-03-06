@@ -11,6 +11,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const maxVisitors = 100000
+
 type RateLimiter struct {
 	visitors map[string]*visitor
 	mu       sync.Mutex
@@ -40,19 +42,33 @@ func (rl *RateLimiter) Stop() {
 	close(rl.stop)
 }
 
-func (rl *RateLimiter) getVisitor(key string) *rate.Limiter {
+func (rl *RateLimiter) getVisitor(key string) (*rate.Limiter, bool) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	v, exists := rl.visitors[key]
 	if !exists {
+		// Check capacity before adding a new entry.
+		if len(rl.visitors) >= maxVisitors {
+			// Evict entries older than the TTL.
+			cutoff := time.Now().Add(-3 * time.Minute)
+			for k, vis := range rl.visitors {
+				if vis.lastSeen.Before(cutoff) {
+					delete(rl.visitors, k)
+				}
+			}
+			// If still at capacity after cleanup, reject.
+			if len(rl.visitors) >= maxVisitors {
+				return nil, false
+			}
+		}
 		limiter := rate.NewLimiter(rl.rps, rl.burst)
 		rl.visitors[key] = &visitor{limiter: limiter, lastSeen: time.Now()}
-		return limiter
+		return limiter, true
 	}
 
 	v.lastSeen = time.Now()
-	return v.limiter
+	return v.limiter, true
 }
 
 func (rl *RateLimiter) cleanup() {
@@ -97,7 +113,12 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 			key = host
 		}
 
-		limiter := rl.getVisitor(key)
+		limiter, ok := rl.getVisitor(key)
+		if !ok {
+			w.Header().Set("Retry-After", "60")
+			respondJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
 		if !limiter.Allow() {
 			rl.setRateLimitHeaders(w, limiter)
 			w.Header().Set("Retry-After", "60")

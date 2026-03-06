@@ -99,13 +99,15 @@ func (r *pgVaultRepo) CreateHistory(ctx context.Context, entry *model.VaultHisto
 	return nil
 }
 
-func (r *pgVaultRepo) GetHistory(ctx context.Context, vaultID uuid.UUID, limit int) ([]model.VaultHistory, error) {
+func (r *pgVaultRepo) GetHistory(ctx context.Context, vaultID uuid.UUID, userID uuid.UUID, limit int) ([]model.VaultHistory, error) {
 	query := `
-		SELECT id, vault_id, version, checksum, created_at
-		FROM vault_history WHERE vault_id = $1
-		ORDER BY version DESC LIMIT $2`
+		SELECT vh.id, vh.vault_id, vh.version, vh.checksum, vh.created_at
+		FROM vault_history vh
+		JOIN vaults v ON vh.vault_id = v.id
+		WHERE vh.vault_id = $1 AND v.user_id = $2
+		ORDER BY vh.version DESC LIMIT $3`
 
-	rows, err := r.pool.Query(ctx, query, vaultID, limit)
+	rows, err := r.pool.Query(ctx, query, vaultID, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("getting vault history: %w", err)
 	}
@@ -125,13 +127,15 @@ func (r *pgVaultRepo) GetHistory(ctx context.Context, vaultID uuid.UUID, limit i
 	return entries, nil
 }
 
-func (r *pgVaultRepo) GetHistoryVersion(ctx context.Context, vaultID uuid.UUID, version int) (*model.VaultHistory, error) {
+func (r *pgVaultRepo) GetHistoryVersion(ctx context.Context, vaultID uuid.UUID, userID uuid.UUID, version int) (*model.VaultHistory, error) {
 	query := `
-		SELECT id, vault_id, version, blob, checksum, created_at
-		FROM vault_history WHERE vault_id = $1 AND version = $2`
+		SELECT vh.id, vh.vault_id, vh.version, vh.blob, vh.checksum, vh.created_at
+		FROM vault_history vh
+		JOIN vaults v ON vh.vault_id = v.id
+		WHERE vh.vault_id = $1 AND v.user_id = $2 AND vh.version = $3`
 
 	var entry model.VaultHistory
-	err := r.pool.QueryRow(ctx, query, vaultID, version).Scan(
+	err := r.pool.QueryRow(ctx, query, vaultID, userID, version).Scan(
 		&entry.ID, &entry.VaultID, &entry.Version, &entry.Blob,
 		&entry.Checksum, &entry.CreatedAt)
 	if err != nil {

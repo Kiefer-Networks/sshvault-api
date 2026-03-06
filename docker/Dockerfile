@@ -1,4 +1,5 @@
 # Build stage
+# Pin to specific minor version; for production, consider pinning to SHA256 digest
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 ARG TARGETOS

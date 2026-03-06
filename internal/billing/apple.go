@@ -205,6 +205,10 @@ func (p *AppleProvider) HandleWebhook(ctx context.Context, payload, _ string) er
 		return fmt.Errorf("decoding transaction from notification: %w", err)
 	}
 
+	if txInfo.BundleID != p.bundleID {
+		return fmt.Errorf("bundle ID mismatch: expected %s", p.bundleID)
+	}
+
 	// Look up subscription by originalTransactionId.
 	sub, err := p.subRepo.GetByProviderSubID(ctx, txInfo.OriginalTransactionID)
 	if err != nil || sub == nil {

@@ -164,7 +164,7 @@ func (s *VaultService) GetHistory(ctx context.Context, userID uuid.UUID) ([]Vaul
 		return nil, nil
 	}
 
-	entries, err := s.vaultRepo.GetHistory(ctx, vault.ID, s.historyLimit)
+	entries, err := s.vaultRepo.GetHistory(ctx, vault.ID, userID, s.historyLimit)
 	if err != nil {
 		return nil, fmt.Errorf("getting history: %w", err)
 	}
@@ -189,7 +189,7 @@ func (s *VaultService) GetHistoryVersion(ctx context.Context, userID uuid.UUID, 
 		return nil, fmt.Errorf("vault not found")
 	}
 
-	entry, err := s.vaultRepo.GetHistoryVersion(ctx, vault.ID, version)
+	entry, err := s.vaultRepo.GetHistoryVersion(ctx, vault.ID, userID, version)
 	if err != nil {
 		return nil, fmt.Errorf("getting history version: %w", err)
 	}

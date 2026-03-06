@@ -14,7 +14,7 @@ type VaultRepository interface {
 
 	// History
 	CreateHistory(ctx context.Context, entry *model.VaultHistory) error
-	GetHistory(ctx context.Context, vaultID uuid.UUID, limit int) ([]model.VaultHistory, error)
-	GetHistoryVersion(ctx context.Context, vaultID uuid.UUID, version int) (*model.VaultHistory, error)
+	GetHistory(ctx context.Context, vaultID uuid.UUID, userID uuid.UUID, limit int) ([]model.VaultHistory, error)
+	GetHistoryVersion(ctx context.Context, vaultID uuid.UUID, userID uuid.UUID, version int) (*model.VaultHistory, error)
 	PruneHistory(ctx context.Context, vaultID uuid.UUID, keepCount int) error
 }

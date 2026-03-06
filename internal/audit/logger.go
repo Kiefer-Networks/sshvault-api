@@ -2,8 +2,10 @@ package audit
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,12 +20,13 @@ type Logger struct {
 	ch      chan *Entry
 	done    chan struct{}
 	once    sync.Once
+	dropped atomic.Int64
 }
 
 // NewLogger creates a new async audit logger with the given buffer size.
 func NewLogger(repo *Repository, bufferSize int) *Logger {
 	if bufferSize <= 0 {
-		bufferSize = 1024
+		bufferSize = 4096
 	}
 	l := &Logger{
 		repo: repo,
@@ -31,6 +34,7 @@ func NewLogger(repo *Repository, bufferSize int) *Logger {
 		done: make(chan struct{}),
 	}
 	go l.run()
+	go l.reportDropped()
 	return l
 }
 
@@ -66,7 +70,7 @@ func (l *Logger) run() {
 }
 
 // Log sends an entry to the async buffer. Non-blocking: drops the entry
-// if the buffer is full (and logs a warning).
+// if the buffer is full and increments the drop counter.
 func (l *Logger) Log(entry *Entry) {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
@@ -74,10 +78,23 @@ func (l *Logger) Log(entry *Entry) {
 	select {
 	case l.ch <- entry:
 	default:
-		log.Warn().
-			Str("category", string(entry.Category)).
-			Str("action", string(entry.Action)).
-			Msg("audit log buffer full, entry dropped")
+		l.dropped.Add(1)
+	}
+}
+
+// reportDropped periodically logs the count of dropped entries.
+func (l *Logger) reportDropped() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-l.done:
+			return
+		case <-ticker.C:
+			if n := l.dropped.Swap(0); n > 0 {
+				log.Warn().Int64("count", n).Msg("audit log entries dropped due to full buffer")
+			}
+		}
 	}
 }
 
@@ -113,8 +130,12 @@ func (l *Logger) LogFromRequest(r *http.Request, category Category, action Actio
 		entry.ActorID = &userID
 	}
 
-	// IP and User-Agent from request
-	entry.IPAddress = r.RemoteAddr
+	// IP (strip port) and User-Agent from request
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr // fallback if no port
+	}
+	entry.IPAddress = ip
 	entry.UserAgent = r.UserAgent()
 
 	return &EntryBuilder{entry: entry, logger: l}

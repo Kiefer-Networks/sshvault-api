@@ -53,11 +53,11 @@ func (m *mockVaultRepo) CreateHistory(_ context.Context, _ *model.VaultHistory) 
 	return m.err
 }
 
-func (m *mockVaultRepo) GetHistory(_ context.Context, _ uuid.UUID, _ int) ([]model.VaultHistory, error) {
+func (m *mockVaultRepo) GetHistory(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ int) ([]model.VaultHistory, error) {
 	return m.history, m.err
 }
 
-func (m *mockVaultRepo) GetHistoryVersion(_ context.Context, _ uuid.UUID, version int) (*model.VaultHistory, error) {
+func (m *mockVaultRepo) GetHistoryVersion(_ context.Context, _ uuid.UUID, _ uuid.UUID, version int) (*model.VaultHistory, error) {
 	for _, h := range m.history {
 		if h.Version == version {
 			return &h, nil

@@ -58,7 +58,7 @@ func (m *mockVaultRepo) CreateHistory(_ context.Context, entry *model.VaultHisto
 	return nil
 }
 
-func (m *mockVaultRepo) GetHistory(_ context.Context, vaultID uuid.UUID, limit int) ([]model.VaultHistory, error) {
+func (m *mockVaultRepo) GetHistory(_ context.Context, vaultID uuid.UUID, _ uuid.UUID, limit int) ([]model.VaultHistory, error) {
 	h := m.histories[vaultID]
 	if len(h) > limit {
 		h = h[len(h)-limit:]
@@ -66,7 +66,7 @@ func (m *mockVaultRepo) GetHistory(_ context.Context, vaultID uuid.UUID, limit i
 	return h, nil
 }
 
-func (m *mockVaultRepo) GetHistoryVersion(_ context.Context, vaultID uuid.UUID, version int) (*model.VaultHistory, error) {
+func (m *mockVaultRepo) GetHistoryVersion(_ context.Context, vaultID uuid.UUID, _ uuid.UUID, version int) (*model.VaultHistory, error) {
 	for _, e := range m.histories[vaultID] {
 		if e.Version == version {
 			return &e, nil

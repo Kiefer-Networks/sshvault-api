@@ -21,6 +21,8 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+    networks:
+      - backend
 
   backup:
     build:
@@ -44,6 +46,8 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+    networks:
+      - backend
 
   postgres:
     image: postgres:16-alpine
@@ -61,6 +65,12 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    networks:
+      - backend
+
+networks:
+  backend:
+    internal: true
 
 volumes:
   pgdata:

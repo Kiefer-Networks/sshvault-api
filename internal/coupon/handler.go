@@ -46,13 +46,26 @@ func (h *Handler) Redeem(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.Redeem(r.Context(), userID, code)
 	if err != nil {
-		log.Warn().Err(err).Str("user_id", userID.String()).Str("code", code).Msg("coupon redemption failed")
+		truncatedCode := code
+		if len(truncatedCode) > 4 {
+			truncatedCode = truncatedCode[:4] + "***"
+		}
+		log.Warn().Err(err).Str("user_id", userID.String()).Str("code", truncatedCode).Msg("coupon redemption failed")
 		h.audit.LogFromRequest(r, audit.CatBilling, audit.ActCouponRedeem).
 			Level(audit.LevelWarn).
-			Detail("code", code).
+			Detail("code", truncatedCode).
 			Detail("error", err.Error()).
 			Send()
-		respondError(w, http.StatusBadRequest, err.Error())
+
+		// Return curated error messages to avoid leaking internals.
+		errMsg := err.Error()
+		clientMsg := "failed to redeem coupon"
+		if strings.Contains(errMsg, "not found") {
+			clientMsg = "coupon not found"
+		} else if strings.Contains(errMsg, "already redeemed") || strings.Contains(errMsg, "expired") {
+			clientMsg = errMsg
+		}
+		respondError(w, http.StatusBadRequest, clientMsg)
 		return
 	}
 

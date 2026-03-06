@@ -88,7 +88,7 @@ type LogConfig struct {
 
 type AuditConfig struct {
 	RetentionDays int `envconfig:"AUDIT_RETENTION_DAYS" default:"365"`
-	BufferSize    int `envconfig:"AUDIT_BUFFER_SIZE" default:"1024"`
+	BufferSize    int `envconfig:"AUDIT_BUFFER_SIZE" default:"4096"`
 }
 
 func (c *Config) IsDevelopment() bool {
@@ -103,10 +103,44 @@ func (c *BillingConfig) Enabled() bool {
 	return c.StripeSecretKey != ""
 }
 
+// Validate checks that related billing configuration fields are set together.
+// If Stripe is enabled (StripeSecretKey set), StripeWebhookSecret must also be set.
+// If any Apple key field is set, all four must be set together.
+func (c *BillingConfig) Validate() error {
+	// Stripe: if secret key is set, webhook secret must also be set.
+	if c.StripeSecretKey != "" && c.StripeWebhookSecret == "" {
+		return fmt.Errorf("STRIPE_WEBHOOK_SECRET must be set when STRIPE_SECRET_KEY is configured")
+	}
+
+	// Apple: all four fields must be set together if any one is provided.
+	appleFields := map[string]string{
+		"APPLE_KEY_PATH":   c.AppleKeyPath,
+		"APPLE_KEY_ID":     c.AppleKeyID,
+		"APPLE_ISSUER_ID":  c.AppleIssuerID,
+		"APPLE_BUNDLE_ID":  c.AppleBundleID,
+	}
+	var setFields, unsetFields []string
+	for name, val := range appleFields {
+		if val != "" {
+			setFields = append(setFields, name)
+		} else {
+			unsetFields = append(unsetFields, name)
+		}
+	}
+	if len(setFields) > 0 && len(unsetFields) > 0 {
+		return fmt.Errorf("incomplete Apple billing config: %v are set but %v are missing (all must be set together)", setFields, unsetFields)
+	}
+
+	return nil
+}
+
 func Load() (*Config, error) {
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if err := cfg.Billing.Validate(); err != nil {
+		return nil, fmt.Errorf("validating billing config: %w", err)
 	}
 	return &cfg, nil
 }
