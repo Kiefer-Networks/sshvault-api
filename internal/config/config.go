@@ -59,6 +59,7 @@ type BillingConfig struct {
 	AppleEnvironment      string `envconfig:"APPLE_ENVIRONMENT" default:"production"`
 	GoogleServiceAcctPath string `envconfig:"GOOGLE_SERVICE_ACCOUNT_PATH"`
 	GooglePackageName     string `envconfig:"GOOGLE_PACKAGE_NAME"`
+	GoogleWebhookToken    string `envconfig:"GOOGLE_WEBHOOK_TOKEN"`
 }
 
 type VaultConfig struct {
