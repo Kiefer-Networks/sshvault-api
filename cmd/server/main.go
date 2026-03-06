@@ -355,6 +355,11 @@ func main() {
 	r.Get("/health", healthHandler.Health)
 	r.Get("/ready", healthHandler.Ready)
 
+	// Favicon
+	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "api/favicon.ico")
+	})
+
 	// Swagger UI — relaxed CSP for external CDN assets
 	r.Route("/docs", func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -365,7 +370,7 @@ func main() {
 						"style-src 'unsafe-inline' https://unpkg.com; "+
 						"img-src 'self' data:; "+
 						"font-src https://unpkg.com; "+
-						"connect-src 'self'")
+						"connect-src 'self' https://unpkg.com")
 				next.ServeHTTP(w, r)
 			})
 		})
