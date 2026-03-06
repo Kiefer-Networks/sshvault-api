@@ -1,7 +1,7 @@
 # Build stage
 # Pin to specific minor version; in production, pin to SHA256 digest for reproducible builds:
-#   FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:<digest> AS builder
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+#   FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:<digest> AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
