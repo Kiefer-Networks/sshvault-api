@@ -133,7 +133,6 @@ func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int
 		`DELETE FROM vault_history WHERE vault_id IN (SELECT v.id FROM vaults v JOIN users u ON v.user_id = u.id WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1)`,
 		`DELETE FROM vaults WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		`DELETE FROM devices WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		`DELETE FROM subscriptions WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 		// login_attempts has no user_id — match by email
 		`DELETE FROM login_attempts WHERE email IN (SELECT email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
 	}

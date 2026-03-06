@@ -105,6 +105,5 @@ help:
 	@echo "  CLI Usage Examples:"
 	@echo "    make cli ARGS='user list'"
 	@echo "    make cli ARGS='user info admin@example.com'"
-	@echo "    make cli ARGS='billing set user@example.com --days 365'"
 	@echo "    make cli ARGS='backup create'"
 	@echo "    make cli ARGS='backup auto'"

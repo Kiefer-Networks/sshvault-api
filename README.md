@@ -12,9 +12,8 @@ SSHVault uses a Zero-Knowledge architecture: the server never sees plaintext dat
 
 - **Encrypted Blob Sync** with optimistic locking and version history
 - **Ed25519 JWT authentication** with refresh token rotation
-- **Billing** via Stripe, Apple App Store, Google Play
-- **Self-Hosted friendly** — billing disabled when Stripe keys are absent
-- **Admin CLI** for user management, billing, and database backups
+- **Self-Hosted friendly** — zero-knowledge design, server cannot read vault contents
+- **Admin CLI** for user management and database backups
 
 ## Quick Start
 
@@ -92,7 +91,7 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recrea
 
 ## CLI Tool
 
-The `sshvault-cli` binary is included in the Docker image and provides admin commands for user management, billing, and database backups.
+The `sshvault-cli` binary is included in the Docker image and provides admin commands for user management and database backups.
 
 ### Using the CLI in Docker
 
@@ -110,12 +109,6 @@ $COMPOSE exec server ./sshvault-cli user deactivate user@example.com
 $COMPOSE exec server ./sshvault-cli user activate user@example.com
 $COMPOSE exec server ./sshvault-cli user delete user@example.com
 $COMPOSE exec server ./sshvault-cli user delete user@example.com --hard
-
-# Billing / subscriptions
-$COMPOSE exec server ./sshvault-cli billing info user@example.com
-$COMPOSE exec server ./sshvault-cli billing set user@example.com --days 365
-$COMPOSE exec server ./sshvault-cli billing set user@example.com --provider stripe --status active --days 30
-$COMPOSE exec server ./sshvault-cli billing revoke user@example.com
 
 # Database backups (manual)
 $COMPOSE exec server ./sshvault-cli backup create
@@ -156,7 +149,7 @@ make build-cli
 | Command | Description |
 |---|---|
 | `user list [--all]` | List users (optionally include deleted) |
-| `user info <email-or-id>` | Show user profile, subscription, vault, devices |
+| `user info <email-or-id>` | Show user profile, vault, devices |
 | `user delete <email-or-id> [--hard]` | Soft delete (default) or permanent delete with CASCADE |
 | `user deactivate <email-or-id>` | Soft delete + revoke all sessions |
 | `user activate <email-or-id>` | Reactivate a deactivated user |
@@ -165,15 +158,6 @@ make build-cli
 | `user delete-device <email-or-id> <device-id>` | Remove a specific device |
 | `user audit <email-or-id> [-n LIMIT]` | Show audit log (default: last 50 entries) |
 | `user reset-vault <email-or-id>` | Delete user's encrypted vault and history |
-
-#### Billing
-
-| Command | Description |
-|---|---|
-| `billing info <email-or-id>` | Show subscription history |
-| `billing set <email-or-id> [--provider] [--status] [--days]` | Create or update subscription |
-| `billing revoke <email-or-id>` | Cancel all subscriptions |
-| `billing sync` | Reconcile active subscriptions against provider APIs |
 
 #### Database Backup
 
@@ -297,47 +281,12 @@ Base URL: `https://api.example.com`
 | `/v1/user/password` | PUT | Yes | Change password |
 | `/v1/devices` | GET/POST | Yes | List / register devices |
 | `/v1/devices/{id}` | DELETE | Yes | Remove device |
-| `/v1/billing/status` | GET | Yes | Subscription status |
-| `/v1/billing/checkout` | POST | Yes | Create Stripe checkout |
-| `/v1/billing/portal` | POST | Yes | Stripe customer portal |
 | `/v1/user/avatar` | PUT | Yes | Update avatar (base64, max 512 KB) |
 | `/v1/user/avatar` | DELETE | Yes | Delete avatar |
-| `/v1/billing/verify-google` | POST | Yes | Verify Google Play purchase |
-| `/v1/billing/verify-apple` | POST | Yes | Verify Apple App Store purchase |
-| `/v1/billing/redeem` | POST | Yes | Redeem coupon code |
-| `/v1/billing/success` | GET | No | Payment success page (HTML) |
-| `/v1/billing/cancel` | GET | No | Payment cancel page (HTML) |
-| `/v1/webhooks/stripe` | POST | No | Stripe webhook |
-| `/v1/webhooks/apple` | POST | No | Apple App Store webhook |
-| `/v1/webhooks/google` | POST | No | Google Play webhook |
 | `/v1/audit` | GET | Yes | User activity log |
 | `/v1/attestation` | GET | No | Server attestation (Ed25519 signed) |
 
 Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
-
-## Stripe Webhooks
-
-When using Stripe billing, you must configure a webhook endpoint in the [Stripe Dashboard](https://dashboard.stripe.com/webhooks):
-
-**Endpoint URL:** `https://api.example.com/v1/webhooks/stripe`
-
-**Required events (Webhook scope):**
-
-| Event | Purpose |
-|---|---|
-| `checkout.session.completed` | Activates subscription after successful payment |
-| `customer.subscription.updated` | Syncs plan changes, renewals, and payment failures |
-| `customer.subscription.deleted` | Marks subscription as canceled |
-
-Set `STRIPE_WEBHOOK_SECRET` in your `.env` to the signing secret from the Stripe Dashboard (starts with `whsec_`). The server verifies every webhook signature — unsigned or tampered payloads are rejected.
-
-**Minimal setup:**
-
-1. Go to [Stripe Dashboard → Webhooks](https://dashboard.stripe.com/webhooks)
-2. Click "Add endpoint"
-3. Enter your endpoint URL
-4. Select the three events listed above
-5. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`
 
 ## Configuration
 
@@ -367,17 +316,6 @@ Key environment variables:
 | `SMTP_USER` | No | — | SMTP username |
 | `SMTP_PASS` | No | — | SMTP password |
 | `SMTP_FROM` | No | `noreply@sshvault.app` | Sender address |
-| **Billing** | | | |
-| `STRIPE_SECRET_KEY` | No | — | Enables billing when set |
-| `STRIPE_WEBHOOK_SECRET` | No | — | Stripe webhook signing secret |
-| `STRIPE_PRICE_ID` | No | — | Stripe subscription price ID |
-| `APPLE_KEY_PATH` | No | — | Apple App Store Connect key file |
-| `APPLE_KEY_ID` | No | — | Apple key ID |
-| `APPLE_ISSUER_ID` | No | — | Apple issuer ID |
-| `APPLE_BUNDLE_ID` | No | — | Apple app bundle ID |
-| `APPLE_ENVIRONMENT` | No | `production` | `production` or `sandbox` |
-| `GOOGLE_SERVICE_ACCOUNT_PATH` | No | — | Google Play service account JSON |
-| `GOOGLE_PACKAGE_NAME` | No | — | Android package name |
 | **Vault** | | | |
 | `VAULT_MAX_SIZE_MB` | No | `50` | Maximum vault blob size (MB) |
 | `VAULT_HISTORY_LIMIT` | No | `10` | Maximum stored vault versions |
@@ -401,7 +339,6 @@ Key environment variables:
 ## Self-Hosted
 
 For self-hosted instances:
-- Leave `STRIPE_SECRET_KEY` empty → billing is disabled, sync always allowed
 - Leave `SMTP_HOST` empty → emails logged to stdout
 - All data remains encrypted — the server cannot read vault contents
 - Set `TRUSTED_PROXIES` to match your reverse proxy's IP/network
@@ -441,14 +378,6 @@ For self-hosted instances:
 - `Referrer-Policy: no-referrer`
 - `Cache-Control: no-store`
 - `Permissions-Policy` disables camera, microphone, geolocation, Topics API
-
-## Documentation
-
-Detailed integration guides are available in the [`docs/`](docs/) directory:
-
-| Document | Description |
-|----------|-------------|
-| [Google Play Integration](docs/google-play-integration.md) | Full implementation guide for Google Play Billing |
 
 ## License
 

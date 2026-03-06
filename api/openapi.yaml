@@ -919,7 +919,7 @@ components:
           enum: [info, warn, error]
         category:
           type: string
-          enum: [AUTH, VAULT, BILLING, DEVICE, USER, SYSTEM, WEBHOOK]
+          enum: [AUTH, VAULT, DEVICE, USER, SYSTEM]
         action:
           type: string
         actor_id:
