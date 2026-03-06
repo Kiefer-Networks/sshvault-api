@@ -23,6 +23,7 @@ services:
       - no-new-privileges:true
     networks:
       - backend
+      - proxy
 
   backup:
     build:
@@ -71,6 +72,7 @@ services:
 networks:
   backend:
     internal: true
+  proxy:
 
 volumes:
   pgdata:
