@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// maxNonces is the upper limit for the in-memory nonce map to prevent
+// unbounded memory growth from rapid attestation requests.
+const maxNonces = 10000
+
 // AttestationHandler provides server identity attestation.
 type AttestationHandler struct {
 	privateKey ed25519.PrivateKey
@@ -56,6 +60,22 @@ func (h *AttestationHandler) GetAttestation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	now := time.Now()
+
+	// Enforce size cap: clean expired nonces first, then reject if still full
+	if len(h.usedNonces) >= maxNonces {
+		cutoff := now.Add(-h.nonceWindow).Unix()
+		for k, ts := range h.usedNonces {
+			if ts < cutoff {
+				delete(h.usedNonces, k)
+			}
+		}
+		if len(h.usedNonces) >= maxNonces {
+			h.mu.Unlock()
+			respondError(w, http.StatusServiceUnavailable, "attestation service temporarily at capacity")
+			return
+		}
+	}
+
 	h.usedNonces[nonce] = now.Unix()
 	// Clean expired nonces
 	cutoff := now.Add(-h.nonceWindow).Unix()
