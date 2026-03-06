@@ -4,9 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/smtp"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
+
+// sanitizeHeader strips CR and LF characters to prevent SMTP header injection.
+func sanitizeHeader(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
 
 type Mailer interface {
 	Send(ctx context.Context, to, subject, body string) error
@@ -32,6 +40,9 @@ func NewSMTPMailer(host string, port int, user, pass, from string) *SMTPMailer {
 
 func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	addr := fmt.Sprintf("%s:%d", m.host, m.port)
+
+	to = sanitizeHeader(to)
+	subject = sanitizeHeader(subject)
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
 		m.from, to, subject, body)
