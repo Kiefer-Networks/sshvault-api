@@ -1,6 +1,7 @@
 # Build stage
-# Pin to specific minor version; for production, consider pinning to SHA256 digest
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+# Pin to specific minor version; in production, pin to SHA256 digest for reproducible builds:
+#   FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:<digest> AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -17,6 +18,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /shellvault-cli ./cmd/cli
 
 # Runtime stage
+# In production, pin to SHA256 digest: FROM alpine:3.21@sha256:<digest>
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata postgresql16-client gzip

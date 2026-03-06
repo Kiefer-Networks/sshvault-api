@@ -2,11 +2,25 @@ package middleware
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
+
+// maskEmail redacts the local part of an email address for log output.
+func maskEmail(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return "***"
+	}
+	local, domain := parts[0], parts[1]
+	if len(local) <= 2 {
+		return "***@" + domain
+	}
+	return local[:2] + "***@" + domain
+}
 
 const (
 	// MaxFailedAttempts before account lockout.
@@ -30,7 +44,7 @@ func NewBruteForceGuard(pool *pgxpool.Pool) *BruteForceGuard {
 func (g *BruteForceGuard) RecordAttempt(ctx context.Context, email, ip string, success bool) {
 	query := `INSERT INTO login_attempts (email, ip_address, success, created_at) VALUES ($1, $2, $3, $4)`
 	if _, err := g.pool.Exec(ctx, query, email, ip, success, time.Now()); err != nil {
-		log.Error().Err(err).Str("email", email).Msg("failed to record login attempt")
+		log.Error().Err(err).Str("email", maskEmail(email)).Msg("failed to record login attempt")
 	}
 }
 

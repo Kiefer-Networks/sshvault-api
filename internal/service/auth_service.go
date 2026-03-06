@@ -104,6 +104,20 @@ func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User, devi
 	}, nil
 }
 
+// maskEmail redacts the local part of an email address for log output.
+// Example: "user@example.com" -> "us***@example.com"
+func maskEmail(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return "***"
+	}
+	local, domain := parts[0], parts[1]
+	if len(local) <= 2 {
+		return "***@" + domain
+	}
+	return local[:2] + "***@" + domain
+}
+
 // NormalizeEmail lowercases and trims an email address.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
@@ -156,7 +170,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		return nil, fmt.Errorf("creating user: %w", err)
 	}
 
-	log.Info().Str("email", req.Email).Str("user_id", user.ID.String()).Msg("user registered")
+	log.Info().Str("email", maskEmail(req.Email)).Str("user_id", user.ID.String()).Msg("user registered")
 
 	if s.mailer != nil {
 		rawToken := uuid.New().String()
@@ -169,9 +183,9 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 			ExpiresAt: time.Now().Add(24 * time.Hour),
 		}
 		if err := s.verifyRepo.Create(ctx, vt); err != nil {
-			log.Warn().Err(err).Str("email", req.Email).Msg("failed to store verification token")
+			log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to store verification token")
 		} else if err := s.mailer.SendVerificationEmail(ctx, user.Email, rawToken); err != nil {
-			log.Warn().Err(err).Str("email", req.Email).Msg("failed to send verification email")
+			log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to send verification email")
 		}
 	}
 
@@ -197,7 +211,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 	if s.bruteForce != nil {
 		locked, remaining := s.bruteForce.IsAccountLocked(ctx, req.Email)
 		if locked {
-			log.Warn().Str("email", req.Email).Dur("remaining", remaining).Msg("login blocked: account locked")
+			log.Warn().Str("email", maskEmail(req.Email)).Dur("remaining", remaining).Msg("login blocked: account locked")
 			return nil, fmt.Errorf("account temporarily locked, try again in %d minutes", int(remaining.Minutes())+1)
 		}
 	}
@@ -213,7 +227,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
 		}
-		log.Warn().Str("email", req.Email).Str("ip", req.IP).Msg("login failed: unknown email")
+		log.Warn().Str("email", maskEmail(req.Email)).Str("ip", req.IP).Msg("login failed: unknown email")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -222,7 +236,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
 		}
-		log.Warn().Str("email", req.Email).Str("ip", req.IP).Msg("login failed: wrong password")
+		log.Warn().Str("email", maskEmail(req.Email)).Str("ip", req.IP).Msg("login failed: wrong password")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -231,7 +245,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, true)
 		s.bruteForce.ClearAttempts(ctx, req.Email)
 	}
-	log.Info().Str("email", req.Email).Str("ip", req.IP).Msg("login successful")
+	log.Info().Str("email", maskEmail(req.Email)).Str("ip", req.IP).Msg("login successful")
 
 	return s.issueTokenPair(ctx, user, req.DeviceName)
 }
@@ -271,17 +285,18 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 }
 
 // VerifyEmail validates an email verification token and marks the user as verified.
+// Uses atomic token consumption to prevent race conditions where two concurrent
+// requests with the same token could both succeed.
 func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 	hash := auth.HashToken(rawToken)
-	token, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindEmailVerify)
+
+	// Atomically mark the token as used and return it, preventing double-use.
+	token, err := s.verifyRepo.ConsumeVerificationToken(ctx, hash, repository.TokenKindEmailVerify)
 	if err != nil {
-		return fmt.Errorf("looking up token: %w", err)
+		return fmt.Errorf("consuming verification token: %w", err)
 	}
 	if token == nil {
 		return fmt.Errorf("invalid or expired verification token")
-	}
-	if time.Now().After(token.ExpiresAt) {
-		return fmt.Errorf("verification token expired")
 	}
 
 	user, err := s.userRepo.GetByID(ctx, token.UserID)
@@ -294,11 +309,7 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 		return fmt.Errorf("updating user: %w", err)
 	}
 
-	if err := s.verifyRepo.MarkUsed(ctx, token.ID); err != nil {
-		log.Warn().Err(err).Msg("failed to mark verification token as used")
-	}
-
-	log.Info().Str("email", user.Email).Msg("email verified")
+	log.Info().Str("email", maskEmail(user.Email)).Msg("email verified")
 	return nil
 }
 
@@ -330,11 +341,11 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 
 	if s.mailer != nil {
 		if err := s.mailer.SendPasswordResetEmail(ctx, user.Email, rawToken); err != nil {
-			log.Warn().Err(err).Str("email", email).Msg("failed to send password reset email")
+			log.Warn().Err(err).Str("email", maskEmail(email)).Msg("failed to send password reset email")
 		}
 	}
 
-	log.Info().Str("email", email).Msg("password reset requested")
+	log.Info().Str("email", maskEmail(email)).Msg("password reset requested")
 	return nil
 }
 

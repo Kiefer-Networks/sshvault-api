@@ -25,6 +25,9 @@ type VerificationToken struct {
 type VerificationRepository interface {
 	Create(ctx context.Context, token *VerificationToken) error
 	GetByHash(ctx context.Context, tokenHash, kind string) (*VerificationToken, error)
+	// ConsumeVerificationToken atomically marks a valid token as used and returns it.
+	// Returns nil if the token does not exist, is already used, or is expired.
+	ConsumeVerificationToken(ctx context.Context, tokenHash, kind string) (*VerificationToken, error)
 	MarkUsed(ctx context.Context, id uuid.UUID) error
 	DeleteExpired(ctx context.Context) (int64, error)
 	RevokeAllForUser(ctx context.Context, userID uuid.UUID, kind string) error

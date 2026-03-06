@@ -147,6 +147,16 @@ func (m *mockVerifyRepo) GetByHash(_ context.Context, tokenHash, kind string) (*
 	return nil, nil
 }
 
+func (m *mockVerifyRepo) ConsumeVerificationToken(_ context.Context, tokenHash, kind string) (*repository.VerificationToken, error) {
+	for _, t := range m.tokens {
+		if t.TokenHash == tokenHash && t.Kind == kind && !t.Used && t.ExpiresAt.After(time.Now()) {
+			t.Used = true
+			return t, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *mockVerifyRepo) MarkUsed(_ context.Context, id uuid.UUID) error {
 	if t, ok := m.tokens[id]; ok {
 		t.Used = true

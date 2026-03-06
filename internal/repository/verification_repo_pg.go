@@ -57,6 +57,26 @@ func (r *pgVerificationRepo) GetByHash(ctx context.Context, tokenHash, kind stri
 	return &t, nil
 }
 
+func (r *pgVerificationRepo) ConsumeVerificationToken(ctx context.Context, tokenHash, kind string) (*VerificationToken, error) {
+	query := `
+		UPDATE verification_tokens
+		SET used = TRUE
+		WHERE token_hash = $1 AND kind = $2 AND NOT used AND expires_at > NOW()
+		RETURNING id, user_id, token_hash, kind, expires_at, used, created_at`
+
+	var t VerificationToken
+	err := r.pool.QueryRow(ctx, query, tokenHash, kind).Scan(
+		&t.ID, &t.UserID, &t.TokenHash, &t.Kind,
+		&t.ExpiresAt, &t.Used, &t.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("consuming verification token: %w", err)
+	}
+	return &t, nil
+}
+
 func (r *pgVerificationRepo) MarkUsed(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE verification_tokens SET used = TRUE WHERE id = $1`
 	_, err := conn(ctx, r.pool).Exec(ctx, query, id)

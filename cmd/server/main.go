@@ -508,13 +508,13 @@ func main() {
 }
 
 // googleWebhookAuth returns middleware that validates the token query parameter
-// against the configured webhook secret. If no token is configured (empty string),
-// validation is skipped (self-hosted mode where Google billing is disabled).
+// against the configured webhook secret. If no token is configured, all requests
+// are rejected since Google billing is not properly set up.
 func googleWebhookAuth(expectedToken string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if expectedToken == "" {
-				next.ServeHTTP(w, r)
+				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 
