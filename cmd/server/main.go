@@ -344,7 +344,7 @@ func main() {
 	r.Use(mw.RequestID)
 	r.Use(mw.RequestLogger)
 	r.Use(mw.SecurityHeaders)
-	r.Use(chimiddleware.Recoverer)
+	r.Use(mw.RecoverPanic)
 	r.Use(rateLimiter.Limit)
 	r.Use(mw.BodyLimit(10 * 1024 * 1024)) // 10 MB global limit
 	r.Use(cors.Handler(mw.CORSOptions(cfg.Server.CORSOrigins)))
