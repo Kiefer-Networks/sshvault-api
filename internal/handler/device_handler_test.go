@@ -47,7 +47,7 @@ func (m *mockDeviceRepo) Delete(_ context.Context, id, _ uuid.UUID) error {
 	return m.deleteErr
 }
 
-func (m *mockDeviceRepo) UpdateLastSync(_ context.Context, _ uuid.UUID, _ string) error {
+func (m *mockDeviceRepo) UpdateLastSync(_ context.Context, _, _ uuid.UUID, _ string) error {
 	return nil
 }
 

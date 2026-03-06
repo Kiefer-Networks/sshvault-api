@@ -70,10 +70,10 @@ func (r *pgDeviceRepo) Delete(ctx context.Context, id, userID uuid.UUID) error {
 	return nil
 }
 
-func (r *pgDeviceRepo) UpdateLastSync(ctx context.Context, id uuid.UUID, ip string) error {
+func (r *pgDeviceRepo) UpdateLastSync(ctx context.Context, id, userID uuid.UUID, ip string) error {
 	now := time.Now()
-	query := `UPDATE devices SET last_sync = $1, last_ip = $2, last_seen = $3 WHERE id = $4`
-	_, err := r.pool.Exec(ctx, query, now, ip, now, id)
+	query := `UPDATE devices SET last_sync = $1, last_ip = $2, last_seen = $3 WHERE id = $4 AND user_id = $5`
+	_, err := r.pool.Exec(ctx, query, now, ip, now, id, userID)
 	if err != nil {
 		return fmt.Errorf("updating last sync: %w", err)
 	}

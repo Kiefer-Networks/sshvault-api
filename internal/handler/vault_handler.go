@@ -45,7 +45,7 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.trackDevice(r)
+	h.trackDevice(r, userID)
 	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPull).
 		Resource("vault", userID.String()).
 		Send()
@@ -94,7 +94,7 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.trackDevice(r)
+	h.trackDevice(r, userID)
 	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPush).
 		Resource("vault", userID.String()).
 		Detail("version", req.Version).
@@ -144,7 +144,7 @@ func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request)
 	respondJSON(w, http.StatusOK, resp)
 }
 
-func (h *VaultHandler) trackDevice(r *http.Request) {
+func (h *VaultHandler) trackDevice(r *http.Request, userID uuid.UUID) {
 	deviceIDStr := r.Header.Get("X-Device-ID")
 	if deviceIDStr == "" {
 		return
@@ -154,7 +154,7 @@ func (h *VaultHandler) trackDevice(r *http.Request) {
 		return
 	}
 	ip := clientIP(r)
-	if err := h.deviceRepo.UpdateLastSync(r.Context(), deviceID, ip); err != nil {
+	if err := h.deviceRepo.UpdateLastSync(r.Context(), deviceID, userID, ip); err != nil {
 		log.Warn().Err(err).Str("device_id", deviceIDStr).Msg("failed to track device sync")
 	}
 }
