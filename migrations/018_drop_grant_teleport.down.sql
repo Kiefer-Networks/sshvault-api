@@ -1,0 +1,1 @@
+ALTER TABLE coupons ADD COLUMN grant_teleport BOOLEAN NOT NULL DEFAULT false;

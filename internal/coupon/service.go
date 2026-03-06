@@ -21,7 +21,7 @@ func NewService(pool *pgxpool.Pool, repo *Repository) *Service {
 }
 
 // Redeem atomically validates and redeems a coupon for a user.
-// It creates the subscription / unlocks teleport as needed within a single transaction.
+// It creates the subscription as needed within a single transaction.
 func (s *Service) Redeem(ctx context.Context, userID uuid.UUID, code string) (*RedeemResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
