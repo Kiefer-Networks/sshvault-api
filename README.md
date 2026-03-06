@@ -300,11 +300,18 @@ Base URL: `https://api.example.com`
 | `/v1/billing/status` | GET | Yes | Subscription status |
 | `/v1/billing/checkout` | POST | Yes | Create Stripe checkout |
 | `/v1/billing/portal` | POST | Yes | Stripe customer portal |
+| `/v1/user/avatar` | PUT | Yes | Update avatar (base64, max 512 KB) |
+| `/v1/user/avatar` | DELETE | Yes | Delete avatar |
+| `/v1/billing/verify-google` | POST | Yes | Verify Google Play purchase |
+| `/v1/billing/verify-apple` | POST | Yes | Verify Apple App Store purchase |
+| `/v1/billing/redeem` | POST | Yes | Redeem coupon code |
+| `/v1/billing/success` | GET | No | Payment success page (HTML) |
+| `/v1/billing/cancel` | GET | No | Payment cancel page (HTML) |
 | `/v1/webhooks/stripe` | POST | No | Stripe webhook |
 | `/v1/webhooks/apple` | POST | No | Apple App Store webhook |
 | `/v1/webhooks/google` | POST | No | Google Play webhook |
 | `/v1/audit` | GET | Yes | User activity log |
-| `/v1/attestation` | GET | No | Server attestation (signed JWT) |
+| `/v1/attestation` | GET | No | Server attestation (Ed25519 signed) |
 
 Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
 
@@ -340,13 +347,56 @@ Key environment variables:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| **Server** | | | |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
-| `TRUSTED_PROXIES` | No | `127.0.0.1/8,::1/128` | CIDR ranges of trusted reverse proxies |
-| `JWT_PRIVATE_KEY_PATH` | No | `./keys/ed25519.pem` | Path to Ed25519 PEM key (auto-generated if missing) |
-| `STRIPE_SECRET_KEY` | No | — | Enables billing when set |
-| `SMTP_HOST` | No | — | Enables email sending when set |
 | `POSTGRES_PASSWORD` | Yes | — | PostgreSQL password (Docker Compose) |
+| `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
+| `SERVER_ENV` | No | `production` | `production` or `development` |
+| `SERVER_ID` | No | `shellvault-primary` | Server identity for attestation |
+| `APP_BASE_URL` | No | `https://app.sshvault.app` | Frontend URL (for emails, redirects) |
+| `API_BASE_URL` | No | `https://api.sshvault.app` | Public API URL |
+| `TRUSTED_PROXIES` | No | `127.0.0.1/8,::1/128` | CIDR ranges of trusted reverse proxies |
+| `CORS_ORIGINS` | No | — | Comma-separated allowed origins |
+| **Auth** | | | |
+| `JWT_PRIVATE_KEY_PATH` | No | `./keys/ed25519.pem` | Path to Ed25519 PEM key (auto-generated) |
+| `JWT_ACCESS_TTL` | No | `15m` | Access token lifetime |
+| `JWT_REFRESH_TTL` | No | `720h` | Refresh token lifetime |
+| **Mail** | | | |
+| `SMTP_HOST` | No | — | Enables email sending when set |
+| `SMTP_PORT` | No | `587` | SMTP port |
+| `SMTP_USER` | No | — | SMTP username |
+| `SMTP_PASS` | No | — | SMTP password |
+| `SMTP_FROM` | No | `noreply@sshvault.app` | Sender address |
+| **Billing** | | | |
+| `STRIPE_SECRET_KEY` | No | — | Enables billing when set |
+| `STRIPE_WEBHOOK_SECRET` | No | — | Stripe webhook signing secret |
+| `STRIPE_PRICE_ID` | No | — | Stripe subscription price ID |
+| `APPLE_KEY_PATH` | No | — | Apple App Store Connect key file |
+| `APPLE_KEY_ID` | No | — | Apple key ID |
+| `APPLE_ISSUER_ID` | No | — | Apple issuer ID |
+| `APPLE_BUNDLE_ID` | No | — | Apple app bundle ID |
+| `APPLE_ENVIRONMENT` | No | `production` | `production` or `sandbox` |
+| `GOOGLE_SERVICE_ACCOUNT_PATH` | No | — | Google Play service account JSON |
+| `GOOGLE_PACKAGE_NAME` | No | — | Android package name |
+| **Vault** | | | |
+| `VAULT_MAX_SIZE_MB` | No | `50` | Maximum vault blob size (MB) |
+| `VAULT_HISTORY_LIMIT` | No | `10` | Maximum stored vault versions |
+| **Rate Limiting** | | | |
+| `RATE_LIMIT_RPS` | No | `10` | Requests per second (global) |
+| `RATE_LIMIT_BURST` | No | `20` | Burst capacity |
+| **Backup** | | | |
+| `BACKUP_DIR` | No | `./backups` | Backup directory path |
+| `BACKUP_INTERVAL` | No | `24h` | Auto-backup interval |
+| `BACKUP_RETENTION` | No | `7` | Number of backups to keep |
+| **Logging** | | | |
+| `LOG_FILE_PATH` | No | — | Log file path (empty = stdout only) |
+| `LOG_MAX_SIZE_MB` | No | `100` | Max log file size before rotation |
+| `LOG_MAX_AGE_DAYS` | No | `90` | Max log file age |
+| `LOG_MAX_BACKUPS` | No | `10` | Number of rotated log files to keep |
+| `LOG_COMPRESS` | No | `true` | Compress rotated log files |
+| **Audit** | | | |
+| `AUDIT_RETENTION_DAYS` | No | `365` | Audit log retention period |
+| `AUDIT_BUFFER_SIZE` | No | `1024` | Audit event buffer size |
 
 ## Self-Hosted
 
