@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,20 @@ import (
 	"github.com/kiefernetworks/shellvault-server/internal/service"
 
 )
+
+// safeGo runs fn in a goroutine with panic recovery and WaitGroup tracking.
+func safeGo(wg *sync.WaitGroup, logger zerolog.Logger, name string, fn func()) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error().Interface("panic", r).Str("goroutine", name).Msg("recovered from panic in background goroutine")
+			}
+		}()
+		fn()
+	}()
+}
 
 func main() {
 	// Load config
@@ -152,9 +167,7 @@ func main() {
 	var bgWg sync.WaitGroup
 
 	// Background cleanup of old login attempts (every hour)
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
+	safeGo(&bgWg, log.Logger, "brute-force-cleanup", func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -165,12 +178,10 @@ func main() {
 				bruteForceGuard.Cleanup(bgCtx)
 			}
 		}
-	}()
+	})
 
 	// Background cleanup of expired tokens (every 6 hours)
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
+	safeGo(&bgWg, log.Logger, "token-cleanup", func() {
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -193,13 +204,11 @@ func main() {
 				}
 			}
 		}
-	}()
+	})
 
 	// Background purge of soft-deleted users after 30 days (every 24 hours)
 	// Also anonymizes audit logs for purged users (GDPR compliance)
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
+	safeGo(&bgWg, log.Logger, "user-purge", func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -233,12 +242,10 @@ func main() {
 				}
 			}
 		}
-	}()
+	})
 
 	// Weekly audit log retention cleanup
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
+	safeGo(&bgWg, log.Logger, "audit-retention", func() {
 		ticker := time.NewTicker(7 * 24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -255,7 +262,7 @@ func main() {
 				}
 			}
 		}
-	}()
+	})
 
 	// Services
 	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, transactor, jwtManager, mailService, bruteForceGuard)
@@ -316,9 +323,7 @@ func main() {
 	powGuard := mw.NewPowGuard(16) // 16 leading zero bits base difficulty
 
 	// Background PoW challenge cleanup (every 5 minutes)
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
+	safeGo(&bgWg, log.Logger, "pow-cleanup", func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -329,7 +334,7 @@ func main() {
 				powGuard.Cleanup()
 			}
 		}
-	}()
+	})
 
 	// Middleware
 	authMiddleware := mw.NewAuthMiddleware(jwtManager)
@@ -454,7 +459,7 @@ func main() {
 		// Webhooks (public, signature-verified)
 		r.Post("/webhooks/stripe", billingHandler.StripeWebhook)
 		r.Post("/webhooks/apple", billingHandler.AppleWebhook)
-		r.Post("/webhooks/google", billingHandler.GoogleWebhook)
+		r.With(googleWebhookAuth(cfg.Billing.GoogleWebhookToken)).Post("/webhooks/google", billingHandler.GoogleWebhook)
 	})
 
 	// Server
@@ -500,6 +505,28 @@ func main() {
 	}
 
 	log.Info().Msg("server stopped")
+}
+
+// googleWebhookAuth returns middleware that validates the token query parameter
+// against the configured webhook secret. If no token is configured (empty string),
+// validation is skipped (self-hosted mode where Google billing is disabled).
+func googleWebhookAuth(expectedToken string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if expectedToken == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			token := r.URL.Query().Get("token")
+			if subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func runMigrations(databaseURL string) error {
