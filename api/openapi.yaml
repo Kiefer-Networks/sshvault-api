@@ -65,6 +65,10 @@ paths:
           description: Server and database are ready
         "503":
           description: Database not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/auth/challenge:
     get:
@@ -90,6 +94,10 @@ paths:
                 $ref: "#/components/schemas/PowChallenge"
         "503":
           description: Server at capacity, try again later
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/auth/register:
     post:
@@ -107,6 +115,7 @@ paths:
             schema:
               type: object
               required: [email, password]
+              additionalProperties: false
               properties:
                 email:
                   type: string
@@ -123,8 +132,16 @@ paths:
                 $ref: "#/components/schemas/AuthResponse"
         "428":
           description: Proof of work required (missing X-PoW headers)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Invalid or expired proof of work
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/auth/login:
     post:
@@ -142,6 +159,7 @@ paths:
             schema:
               type: object
               required: [email, password]
+              additionalProperties: false
               properties:
                 email:
                   type: string
@@ -159,10 +177,22 @@ paths:
                 $ref: "#/components/schemas/AuthResponse"
         "401":
           description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "428":
           description: Proof of work required (missing X-PoW headers)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Invalid or expired proof of work
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/auth/refresh:
     post:
@@ -176,6 +206,7 @@ paths:
             schema:
               type: object
               required: [refresh_token]
+              additionalProperties: false
               properties:
                 refresh_token:
                   type: string
@@ -188,6 +219,10 @@ paths:
                 $ref: "#/components/schemas/AuthResponse"
         "401":
           description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/auth/logout:
     post:
@@ -230,6 +265,10 @@ paths:
                     example: email verified
         "400":
           description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/auth/forgot-password:
     post:
@@ -242,6 +281,7 @@ paths:
             schema:
               type: object
               required: [email]
+              additionalProperties: false
               properties:
                 email:
                   type: string
@@ -262,6 +302,7 @@ paths:
             schema:
               type: object
               required: [token, new_password]
+              additionalProperties: false
               properties:
                 token:
                   type: string
@@ -288,6 +329,10 @@ paths:
                 $ref: "#/components/schemas/VaultResponse"
         "402":
           description: Active subscription required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     put:
       tags: [Vault]
       summary: Upload vault blob (optimistic locking)
@@ -301,6 +346,7 @@ paths:
             schema:
               type: object
               required: [version, blob, checksum]
+              additionalProperties: false
               properties:
                 version:
                   type: integer
@@ -317,11 +363,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VaultResponse"
+                $ref: "#/components/schemas/VaultWriteResponse"
         "402":
           description: Active subscription required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Version conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConflictError"
 
   /v1/vault/history:
     get:
@@ -336,9 +390,12 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/VaultHistoryEntry"
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VaultHistoryEntry"
 
   /v1/vault/history/{version}:
     get:
@@ -362,6 +419,10 @@ paths:
                 $ref: "#/components/schemas/VaultResponse"
         "404":
           description: Version not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/user:
     get:
@@ -387,6 +448,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 email:
                   type: string
@@ -421,6 +483,7 @@ paths:
             schema:
               type: object
               required: [current_password, new_password]
+              additionalProperties: false
               properties:
                 current_password:
                   type: string
@@ -536,6 +599,7 @@ paths:
             schema:
               type: object
               required: [purchase_token]
+              additionalProperties: false
               properties:
                 purchase_token:
                   type: string
@@ -558,10 +622,22 @@ paths:
                     example: active
         "400":
           description: Missing purchase_token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Google Play verification failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Google Play billing not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/billing/verify-apple:
     post:
@@ -577,6 +653,7 @@ paths:
             schema:
               type: object
               required: [transaction_id]
+              additionalProperties: false
               properties:
                 transaction_id:
                   type: string
@@ -599,10 +676,22 @@ paths:
                     example: active
         "400":
           description: Missing transaction_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Apple verification failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Apple billing not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/webhooks/google:
     post:
@@ -645,8 +734,16 @@ paths:
                 $ref: "#/components/schemas/AttestationResponse"
         "400":
           description: Nonce required or exceeds max length
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Nonce already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/user/avatar:
     put:
@@ -662,6 +759,7 @@ paths:
             schema:
               type: object
               required: [avatar]
+              additionalProperties: false
               properties:
                 avatar:
                   type: string
@@ -676,6 +774,10 @@ paths:
                 $ref: "#/components/schemas/User"
         "413":
           description: Avatar exceeds 512 KB size limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       tags: [User]
       summary: Delete user avatar
@@ -714,6 +816,10 @@ paths:
                     example: all sessions revoked
         "500":
           description: Failed to revoke sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/audit:
     get:
@@ -770,6 +876,10 @@ paths:
                 $ref: "#/components/schemas/AuditQueryResult"
         "400":
           description: Invalid filter parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/devices:
     get:
@@ -802,6 +912,7 @@ paths:
             schema:
               type: object
               required: [name]
+              additionalProperties: false
               properties:
                 name:
                   type: string
@@ -821,6 +932,10 @@ paths:
                 $ref: "#/components/schemas/Device"
         "400":
           description: Invalid request (name required or exceeds max length)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/billing/redeem:
     post:
@@ -836,6 +951,7 @@ paths:
             schema:
               type: object
               required: [code]
+              additionalProperties: false
               properties:
                 code:
                   type: string
@@ -849,6 +965,10 @@ paths:
                 $ref: "#/components/schemas/RedeemResult"
         "400":
           description: Invalid code, expired, fully redeemed, or already used by this user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/billing/success:
     get:
@@ -904,6 +1024,26 @@ components:
         example: "48291"
 
   schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+
+    ConflictError:
+      type: object
+      required:
+        - current_version
+        - message
+      properties:
+        current_version:
+          type: integer
+        message:
+          type: string
+
     PowChallenge:
       type: object
       properties:
@@ -945,6 +1085,9 @@ components:
           format: email
         verified:
           type: boolean
+        avatar:
+          type: string
+          description: Base64-encoded avatar image (max 512 KB)
         created_at:
           type: string
           format: date-time
@@ -965,6 +1108,17 @@ components:
         updated_at:
           type: integer
           format: int64
+
+    VaultWriteResponse:
+      type: object
+      properties:
+        version:
+          type: integer
+        checksum:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
 
     VaultHistoryEntry:
       type: object
@@ -1011,6 +1165,20 @@ components:
           type: string
         status:
           type: string
+        subscription:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+            provider:
+              type: string
+            current_period_start:
+              type: string
+              format: date-time
+            current_period_end:
+              type: string
+              format: date-time
 
     AttestationResponse:
       type: object
