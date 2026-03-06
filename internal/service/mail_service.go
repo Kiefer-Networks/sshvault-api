@@ -24,7 +24,7 @@ func NewMailService(mailer mail.Mailer, appBaseURL, apiBaseURL string) *MailServ
 }
 
 func (s *MailService) SendVerificationEmail(ctx context.Context, email, token string) error {
-	subject := "Verify your ShellVault email"
+	subject := "Verify your SSHVault email"
 	body := mail.VerificationEmailBody(s.apiBaseURL, token)
 
 	if err := s.mailer.Send(ctx, email, subject, body); err != nil {
@@ -34,7 +34,7 @@ func (s *MailService) SendVerificationEmail(ctx context.Context, email, token st
 }
 
 func (s *MailService) SendPasswordResetEmail(ctx context.Context, email, token string) error {
-	subject := "Reset your ShellVault password"
+	subject := "Reset your SSHVault password"
 	body := mail.PasswordResetEmailBody(s.appBaseURL, token)
 
 	if err := s.mailer.Send(ctx, email, subject, body); err != nil {

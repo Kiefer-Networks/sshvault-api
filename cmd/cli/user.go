@@ -114,33 +114,6 @@ func userInfoCmd() *cobra.Command {
 				fmt.Printf("Deleted:    %s\n", user.deletedAt.Format(time.RFC3339))
 			}
 
-			// Subscription
-			var subProvider, subProviderSubID, subStatus string
-			var periodStart, periodEnd *time.Time
-			var subCreatedAt time.Time
-			err = pool.QueryRow(ctx,
-				`SELECT provider, provider_sub_id, status, current_period_start, current_period_end, created_at
-				 FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, user.id).
-				Scan(&subProvider, &subProviderSubID, &subStatus, &periodStart, &periodEnd, &subCreatedAt)
-			fmt.Println("\nSubscription:")
-			if err != nil {
-				fmt.Println("  (none)")
-			} else {
-				fmt.Printf("  Provider:     %s\n", subProvider)
-				fmt.Printf("  Provider ID:  %s\n", subProviderSubID)
-				fmt.Printf("  Status:       %s\n", subStatus)
-				if periodStart != nil {
-					fmt.Printf("  Period Start: %s\n", periodStart.Format(time.RFC3339))
-				}
-				if periodEnd != nil {
-					fmt.Printf("  Period End:   %s\n", periodEnd.Format(time.RFC3339))
-					if time.Now().After(*periodEnd) {
-						fmt.Printf("  !! EXPIRED\n")
-					}
-				}
-				fmt.Printf("  Created:      %s\n", subCreatedAt.Format(time.RFC3339))
-			}
-
 			// Vault
 			var vaultVersion int
 			var vaultUpdated time.Time

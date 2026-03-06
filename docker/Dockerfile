@@ -14,8 +14,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /shellvault-server ./cmd/server
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /shellvault-cli ./cmd/cli
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /sshvault-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /sshvault-cli ./cmd/cli
 
 # Runtime stage
 # In production, pin to SHA256 digest: FROM alpine:3.21@sha256:<digest>
@@ -25,8 +25,8 @@ RUN apk add --no-cache ca-certificates tzdata postgresql16-client gzip
 
 WORKDIR /app
 
-COPY --from=builder /shellvault-server .
-COPY --from=builder /shellvault-cli .
+COPY --from=builder /sshvault-server .
+COPY --from=builder /sshvault-cli .
 COPY migrations/ ./migrations/
 COPY api/ ./api/
 
@@ -36,4 +36,4 @@ USER appuser
 
 EXPOSE 8080
 
-ENTRYPOINT ["./shellvault-server"]
+ENTRYPOINT ["./sshvault-server"]

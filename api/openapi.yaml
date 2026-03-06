@@ -1,7 +1,7 @@
 openapi: "3.1.0"
 info:
-  title: ShellVault API
-  description: Zero-Knowledge encrypted sync server for the ShellVault SSH client app.
+  title: SSHVault API
+  description: Zero-Knowledge encrypted sync server for the SSHVault SSH client app.
   version: "1.0.0"
   contact:
     name: Kiefer Networks
@@ -28,8 +28,6 @@ tags:
     description: User profile management
   - name: Devices
     description: Device management
-  - name: Billing
-    description: Subscription billing
   - name: Attestation
     description: Server identity attestation via Ed25519 signatures
   - name: Audit
@@ -327,12 +325,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VaultResponse"
-        "402":
-          description: Active subscription required
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
     put:
       tags: [Vault]
       summary: Upload vault blob (optimistic locking)
@@ -364,12 +356,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VaultWriteResponse"
-        "402":
-          description: Active subscription required
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Version conflict
           content:
@@ -512,202 +498,6 @@ paths:
         "204":
           description: Device removed
 
-  /v1/billing/status:
-    get:
-      tags: [Billing]
-      summary: Get subscription status
-      operationId: billingStatus
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BillingStatus"
-
-  /v1/billing/checkout:
-    post:
-      tags: [Billing]
-      summary: Create Stripe checkout session
-      operationId: billingCheckout
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  url:
-                    type: string
-                    format: uri
-
-  /v1/billing/portal:
-    post:
-      tags: [Billing]
-      summary: Create Stripe customer portal session
-      operationId: billingPortal
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  url:
-                    type: string
-                    format: uri
-
-  /v1/webhooks/stripe:
-    post:
-      tags: [Billing]
-      summary: Stripe webhook endpoint
-      operationId: stripeWebhook
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        "200":
-          description: Webhook processed
-
-  /v1/webhooks/apple:
-    post:
-      tags: [Billing]
-      summary: Apple App Store webhook
-      operationId: appleWebhook
-      responses:
-        "200":
-          description: Webhook processed
-
-  /v1/billing/verify-google:
-    post:
-      tags: [Billing]
-      summary: Verify Google Play purchase and activate subscription
-      operationId: verifyGooglePurchase
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [purchase_token]
-              additionalProperties: false
-              properties:
-                purchase_token:
-                  type: string
-                  description: Google Play purchase token from in-app purchase
-      responses:
-        "200":
-          description: Purchase verified
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  active:
-                    type: boolean
-                  provider:
-                    type: string
-                    example: google
-                  status:
-                    type: string
-                    example: active
-        "400":
-          description: Missing purchase_token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "502":
-          description: Google Play verification failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: Google Play billing not configured
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /v1/billing/verify-apple:
-    post:
-      tags: [Billing]
-      summary: Verify Apple App Store purchase and activate subscription
-      operationId: verifyApplePurchase
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [transaction_id]
-              additionalProperties: false
-              properties:
-                transaction_id:
-                  type: string
-                  description: Apple original transaction ID from in-app purchase
-      responses:
-        "200":
-          description: Purchase verified
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  active:
-                    type: boolean
-                  provider:
-                    type: string
-                    example: apple
-                  status:
-                    type: string
-                    example: active
-        "400":
-          description: Missing transaction_id
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "502":
-          description: Apple verification failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: Apple billing not configured
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /v1/webhooks/google:
-    post:
-      tags: [Billing]
-      summary: Google Play RTDN webhook (via Cloud Pub/Sub push)
-      operationId: googleWebhook
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              description: Cloud Pub/Sub push message envelope
-      responses:
-        "200":
-          description: Webhook processed
-
   /v1/attestation:
     get:
       tags: [Attestation]
@@ -836,7 +626,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [AUTH, VAULT, BILLING, DEVICE, USER, SYSTEM, WEBHOOK]
+            enum: [AUTH, VAULT, DEVICE, USER, SYSTEM]
           description: Filter by event category
         - name: action
           in: query
@@ -936,67 +726,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-
-  /v1/billing/redeem:
-    post:
-      tags: [Billing]
-      summary: Redeem a coupon code
-      operationId: redeemCoupon
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [code]
-              additionalProperties: false
-              properties:
-                code:
-                  type: string
-                  description: Coupon code to redeem
-      responses:
-        "200":
-          description: Coupon redeemed successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RedeemResult"
-        "400":
-          description: Invalid code, expired, fully redeemed, or already used by this user
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /v1/billing/success:
-    get:
-      tags: [Billing]
-      summary: Payment success page
-      description: Static HTML page shown after successful Stripe checkout. Returns HTML, not JSON.
-      operationId: billingSuccessPage
-      responses:
-        "200":
-          description: HTML success page
-          content:
-            text/html:
-              schema:
-                type: string
-
-  /v1/billing/cancel:
-    get:
-      tags: [Billing]
-      summary: Payment cancellation page
-      description: Static HTML page shown when a user cancels Stripe checkout. Returns HTML, not JSON.
-      operationId: billingCancelPage
-      responses:
-        "200":
-          description: HTML cancellation page
-          content:
-            text/html:
-              schema:
-                type: string
 
 components:
   securitySchemes:
@@ -1156,30 +885,6 @@ components:
           type: string
           format: date-time
 
-    BillingStatus:
-      type: object
-      properties:
-        active:
-          type: boolean
-        provider:
-          type: string
-        status:
-          type: string
-        subscription:
-          type: object
-          nullable: true
-          properties:
-            id:
-              type: string
-            provider:
-              type: string
-            current_period_start:
-              type: string
-              format: date-time
-            current_period_end:
-              type: string
-              format: date-time
-
     AttestationResponse:
       type: object
       properties:
@@ -1253,12 +958,3 @@ components:
         offset:
           type: integer
 
-    RedeemResult:
-      type: object
-      properties:
-        sync_granted:
-          type: boolean
-          description: Whether sync access was granted
-        sync_days:
-          type: integer
-          description: Number of days of sync access granted

@@ -1,0 +1,2 @@
+-- Billing tables removed in v1.1.0 (one-time purchase model)
+-- Recreate manually from migrations 006, 010, 015 if needed

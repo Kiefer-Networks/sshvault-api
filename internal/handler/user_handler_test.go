@@ -95,7 +95,7 @@ func (m *mockTokenRepo) DeleteExpired(_ context.Context) (int64, error) {
 // --- helpers ---
 
 func newUserHandler(userRepo repository.UserRepository) *UserHandler {
-	us := service.NewUserService(userRepo, &mockTokenRepo{}, &mockSubRepo{}, &mockBillingProvider{}, nil)
+	us := service.NewUserService(userRepo, &mockTokenRepo{}, nil)
 	al := audit.NewNopLogger()
 	return NewUserHandler(us, userRepo, al)
 }

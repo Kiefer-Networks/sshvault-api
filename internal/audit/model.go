@@ -19,13 +19,11 @@ const (
 type Category string
 
 const (
-	CatAuth    Category = "AUTH"
-	CatVault   Category = "VAULT"
-	CatBilling Category = "BILLING"
-	CatDevice  Category = "DEVICE"
-	CatUser    Category = "USER"
-	CatSystem  Category = "SYSTEM"
-	CatWebhook  Category = "WEBHOOK"
+	CatAuth   Category = "AUTH"
+	CatVault  Category = "VAULT"
+	CatDevice Category = "DEVICE"
+	CatUser   Category = "USER"
+	CatSystem Category = "SYSTEM"
 )
 
 // Action describes the specific operation that was performed.
@@ -58,15 +56,6 @@ const (
 	ActDeviceRegister Action = "DEVICE_REGISTER"
 	ActDeviceList     Action = "DEVICE_LIST"
 	ActDeviceDelete   Action = "DEVICE_DELETE"
-
-	// Billing actions
-	ActStatusCheck   Action = "STATUS_CHECK"
-	ActCheckout      Action = "CHECKOUT"
-	ActPortal        Action = "PORTAL"
-	ActWebhookStripe Action = "WEBHOOK_STRIPE"
-	ActWebhookApple  Action = "WEBHOOK_APPLE"
-	ActWebhookGoogle Action = "WEBHOOK_GOOGLE"
-	ActCouponRedeem  Action = "COUPON_REDEEM"
 
 	// System actions
 	ActStartup  Action = "STARTUP"

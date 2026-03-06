@@ -9,8 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/stripe/stripe-go/v81"
-	stripesub "github.com/stripe/stripe-go/v81/subscription"
 )
 
 // ============================================================
@@ -20,7 +18,6 @@ import (
 type restoreManifest struct {
 	CreatedAt         time.Time      `json:"created_at"`
 	DeletedUsers      []manifestUser `json:"deleted_users"`
-	CanceledSubs      []manifestSub  `json:"canceled_subscriptions"`
 	RevokedTokenCount int            `json:"revoked_token_count"`
 }
 
@@ -28,14 +25,6 @@ type manifestUser struct {
 	ID        uuid.UUID `json:"id"`
 	Email     string    `json:"email"`
 	DeletedAt time.Time `json:"deleted_at"`
-}
-
-type manifestSub struct {
-	ID            uuid.UUID `json:"id"`
-	UserID        uuid.UUID `json:"user_id"`
-	Provider      string    `json:"provider"`
-	ProviderSubID string    `json:"provider_sub_id"`
-	Status        string    `json:"status"`
 }
 
 // ============================================================
@@ -61,25 +50,6 @@ func captureManifest(ctx context.Context, p *pgxpool.Pool) (*restoreManifest, er
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating deleted users: %w", err)
-	}
-
-	// Canceled/expired subscriptions
-	subRows, err := p.Query(ctx,
-		`SELECT id, user_id, provider, provider_sub_id, status
-		 FROM subscriptions WHERE status IN ('canceled', 'expired')`)
-	if err != nil {
-		return nil, fmt.Errorf("querying canceled subs: %w", err)
-	}
-	defer subRows.Close()
-	for subRows.Next() {
-		var s manifestSub
-		if err := subRows.Scan(&s.ID, &s.UserID, &s.Provider, &s.ProviderSubID, &s.Status); err != nil {
-			return nil, fmt.Errorf("scanning canceled sub: %w", err)
-		}
-		m.CanceledSubs = append(m.CanceledSubs, s)
-	}
-	if err := subRows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating canceled subs: %w", err)
 	}
 
 	// Revoked token count
@@ -130,18 +100,6 @@ func mergeManifests(a, b *restoreManifest) *restoreManifest {
 		}
 	}
 
-	// Union of canceled subs (deduplicate by ID)
-	subSeen := make(map[uuid.UUID]bool)
-	for _, s := range a.CanceledSubs {
-		merged.CanceledSubs = append(merged.CanceledSubs, s)
-		subSeen[s.ID] = true
-	}
-	for _, s := range b.CanceledSubs {
-		if !subSeen[s.ID] {
-			merged.CanceledSubs = append(merged.CanceledSubs, s)
-		}
-	}
-
 	// Take the higher revoked token count
 	merged.RevokedTokenCount = a.RevokedTokenCount
 	if b.RevokedTokenCount > merged.RevokedTokenCount {
@@ -151,7 +109,7 @@ func mergeManifests(a, b *restoreManifest) *restoreManifest {
 	return merged
 }
 
-func applyManifest(ctx context.Context, p *pgxpool.Pool, m *restoreManifest) (deletedUsers, canceledSubs, revokedTokens int) {
+func applyManifest(ctx context.Context, p *pgxpool.Pool, m *restoreManifest) (deletedUsers, revokedTokens int) {
 	// Re-delete users that were deleted before the restore
 	for _, u := range m.DeletedUsers {
 		result, err := p.Exec(ctx,
@@ -172,20 +130,6 @@ func applyManifest(ctx context.Context, p *pgxpool.Pool, m *restoreManifest) (de
 		}
 	}
 
-	// Re-cancel subscriptions
-	for _, s := range m.CanceledSubs {
-		result, err := p.Exec(ctx,
-			`UPDATE subscriptions SET status = $1, updated_at = now()
-			 WHERE id = $2 AND status NOT IN ('canceled', 'expired')`, s.Status, s.ID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: failed to re-cancel sub %s: %v\n", s.ID, err)
-			continue
-		}
-		if result.RowsAffected() > 0 {
-			canceledSubs++
-		}
-	}
-
 	// Re-revoke tokens for all deleted users (catch-all)
 	result, err := p.Exec(ctx,
 		`UPDATE refresh_tokens SET revoked = TRUE
@@ -198,59 +142,4 @@ func applyManifest(ctx context.Context, p *pgxpool.Pool, m *restoreManifest) (de
 	}
 
 	return
-}
-
-func reconcileStripe(ctx context.Context, p *pgxpool.Pool, stripeKey string) (checked, corrected int, err error) {
-	stripe.Key = stripeKey
-
-	rows, err := p.Query(ctx,
-		`SELECT id, provider_sub_id FROM subscriptions
-		 WHERE provider = 'stripe' AND status = 'active' AND provider_sub_id != ''`)
-	if err != nil {
-		return 0, 0, fmt.Errorf("querying active stripe subs: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var subID uuid.UUID
-		var providerSubID string
-		if err := rows.Scan(&subID, &providerSubID); err != nil {
-			continue
-		}
-		checked++
-
-		stripeSub, err := stripesub.Get(providerSubID, nil)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: Stripe API error for %s: %v\n", providerSubID, err)
-			continue
-		}
-
-		var newStatus string
-		switch stripeSub.Status {
-		case stripe.SubscriptionStatusActive, stripe.SubscriptionStatusTrialing:
-			continue // matches
-		case stripe.SubscriptionStatusCanceled:
-			newStatus = "canceled"
-		case stripe.SubscriptionStatusPastDue:
-			newStatus = "past_due"
-		case stripe.SubscriptionStatusUnpaid, stripe.SubscriptionStatusIncompleteExpired:
-			newStatus = "expired"
-		default:
-			newStatus = "canceled"
-		}
-
-		if _, err := p.Exec(ctx,
-			`UPDATE subscriptions SET status = $1, updated_at = now() WHERE id = $2`,
-			newStatus, subID); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: failed to update sub %s: %v\n", subID, err)
-		} else {
-			fmt.Printf("  Corrected: %s → %s (Stripe: %s)\n", providerSubID, newStatus, stripeSub.Status)
-			corrected++
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return checked, corrected, fmt.Errorf("iterating rows: %w", err)
-	}
-
-	return checked, corrected, nil
 }

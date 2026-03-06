@@ -46,8 +46,8 @@ func TestGenerateAndValidateTokenPair(t *testing.T) {
 	if claims.Subject != userID.String() {
 		t.Errorf("subject = %q, want %q", claims.Subject, userID.String())
 	}
-	if claims.Issuer != "shellvault" {
-		t.Errorf("issuer = %q, want %q", claims.Issuer, "shellvault")
+	if claims.Issuer != "sshvault" {
+		t.Errorf("issuer = %q, want %q", claims.Issuer, "sshvault")
 	}
 }
 

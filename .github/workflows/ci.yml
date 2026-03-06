@@ -82,4 +82,4 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -f docker/Dockerfile -t shellvault-server:ci .
+        run: docker build -f docker/Dockerfile -t sshvault-server:ci .

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,16 +24,13 @@ import (
 
 	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
-	"github.com/kiefernetworks/shellvault-server/internal/billing"
 	"github.com/kiefernetworks/shellvault-server/internal/config"
-	"github.com/kiefernetworks/shellvault-server/internal/coupon"
 	"github.com/kiefernetworks/shellvault-server/internal/crypto"
 	"github.com/kiefernetworks/shellvault-server/internal/handler"
 	"github.com/kiefernetworks/shellvault-server/internal/mail"
 	mw "github.com/kiefernetworks/shellvault-server/internal/middleware"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 	"github.com/kiefernetworks/shellvault-server/internal/service"
-
 )
 
 // safeGo runs fn in a goroutine with panic recovery and WaitGroup tracking.
@@ -83,7 +79,7 @@ func main() {
 
 	log.Logger = zerolog.New(io.MultiWriter(writers...)).With().Timestamp().Logger()
 
-	log.Info().Str("env", cfg.Env()).Str("addr", cfg.Server.Addr).Msg("starting shellvault-server")
+	log.Info().Str("env", cfg.Env()).Str("addr", cfg.Server.Addr).Msg("starting sshvault-server")
 
 	// Database
 	ctx := context.Background()
@@ -125,7 +121,6 @@ func main() {
 	verifyRepo := repository.NewVerificationRepository(pool)
 	vaultRepo := repository.NewVaultRepository(pool)
 	deviceRepo := repository.NewDeviceRepository(pool)
-	subRepo := repository.NewSubscriptionRepository(pool)
 	transactor := repository.NewTransactor(pool)
 
 	// Mailer
@@ -136,22 +131,6 @@ func main() {
 		mailer = mail.NewNoopMailer()
 	}
 	mailService := service.NewMailService(mailer, cfg.Server.AppBaseURL, cfg.Server.APIBaseURL)
-
-	// Billing provider
-	var billingProvider billing.Provider
-	billingEnabled := cfg.Billing.Enabled()
-	if billingEnabled {
-		billingProvider = billing.NewStripeProvider(
-			cfg.Billing.StripeSecretKey,
-			cfg.Billing.StripeWebhookSecret,
-			cfg.Billing.StripePriceID,
-			cfg.Server.APIBaseURL,
-			subRepo,
-			mailer,
-		)
-	} else {
-		billingProvider = billing.NewNoopProvider()
-	}
 
 	// Audit logger (async, buffered)
 	auditRepo := audit.NewRepository(pool)
@@ -267,55 +246,14 @@ func main() {
 	// Services
 	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, transactor, jwtManager, mailService, bruteForceGuard)
 	vaultService := service.NewVaultService(vaultRepo, transactor, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
-	userService := service.NewUserService(userRepo, tokenRepo, subRepo, billingProvider, transactor)
-	billingService := service.NewBillingService(subRepo, billingProvider, billingEnabled)
-
-	// Google Play provider (optional, independent of Stripe)
-	if cfg.Billing.GoogleServiceAcctPath != "" && cfg.Billing.GooglePackageName != "" {
-		googleProvider, err := billing.NewGoogleProvider(
-			cfg.Billing.GoogleServiceAcctPath,
-			cfg.Billing.GooglePackageName,
-			subRepo,
-		)
-		if err != nil {
-			log.Warn().Err(err).Msg("failed to init Google Play provider, Google billing disabled")
-		} else {
-			billingService.SetGoogleProvider(googleProvider)
-			log.Info().Msg("Google Play billing enabled")
-		}
-	}
-
-	// Apple App Store provider (optional, independent of Stripe)
-	if cfg.Billing.AppleKeyPath != "" && cfg.Billing.AppleKeyID != "" &&
-		cfg.Billing.AppleIssuerID != "" && cfg.Billing.AppleBundleID != "" {
-		appleProvider, err := billing.NewAppleProvider(
-			cfg.Billing.AppleKeyPath,
-			cfg.Billing.AppleKeyID,
-			cfg.Billing.AppleIssuerID,
-			cfg.Billing.AppleBundleID,
-			cfg.Billing.AppleEnvironment,
-			subRepo,
-		)
-		if err != nil {
-			log.Warn().Err(err).Msg("failed to init Apple provider, Apple billing disabled")
-		} else {
-			billingService.SetAppleProvider(appleProvider)
-			log.Info().Msg("Apple App Store billing enabled")
-		}
-	}
-
-	// Coupon
-	couponRepo := coupon.NewRepository(pool)
-	couponService := coupon.NewService(pool, couponRepo)
-	couponHandler := coupon.NewHandler(couponService, auditLogger)
+	userService := service.NewUserService(userRepo, tokenRepo, transactor)
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
 	authHandler := handler.NewAuthHandler(authService, auditLogger)
-	vaultHandler := handler.NewVaultHandler(vaultService, billingService, deviceRepo, auditLogger)
+	vaultHandler := handler.NewVaultHandler(vaultService, deviceRepo, auditLogger)
 	userHandler := handler.NewUserHandler(userService, userRepo, auditLogger)
 	deviceHandler := handler.NewDeviceHandler(deviceRepo, auditLogger)
-	billingHandler := handler.NewBillingHandler(billingService, userService, auditLogger)
 	auditHandler := handler.NewAuditHandler(auditRepo)
 	attestationHandler := handler.NewAttestationHandler(privKey, cfg.Server.ServerID, "v1")
 
@@ -439,27 +377,7 @@ func main() {
 
 			// Audit
 			r.Get("/audit", auditHandler.GetAuditLogs)
-
-			// Billing (only if enabled)
-			r.Get("/billing/status", billingHandler.GetStatus)
-			r.Post("/billing/checkout", billingHandler.CreateCheckout)
-			r.Post("/billing/portal", billingHandler.CreatePortal)
-
-			r.Post("/billing/verify-google", billingHandler.VerifyGoogle)
-			r.Post("/billing/verify-apple", billingHandler.VerifyApple)
-			r.Post("/billing/redeem", couponHandler.Redeem)
-
-
 		})
-
-		// Billing pages (public, shown after Stripe redirect)
-		r.Get("/billing/success", billingHandler.SuccessPage)
-		r.Get("/billing/cancel", billingHandler.CancelPage)
-
-		// Webhooks (public, signature-verified)
-		r.Post("/webhooks/stripe", billingHandler.StripeWebhook)
-		r.Post("/webhooks/apple", billingHandler.AppleWebhook)
-		r.With(googleWebhookAuth(cfg.Billing.GoogleWebhookToken)).Post("/webhooks/google", billingHandler.GoogleWebhook)
 	})
 
 	// Server
@@ -505,28 +423,6 @@ func main() {
 	}
 
 	log.Info().Msg("server stopped")
-}
-
-// googleWebhookAuth returns middleware that validates the token query parameter
-// against the configured webhook secret. If no token is configured, all requests
-// are rejected since Google billing is not properly set up.
-func googleWebhookAuth(expectedToken string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if expectedToken == "" {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-
-			token := r.URL.Query().Get("token")
-			if subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 func runMigrations(databaseURL string) error {

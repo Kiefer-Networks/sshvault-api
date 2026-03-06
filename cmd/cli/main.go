@@ -15,8 +15,8 @@ var pool *pgxpool.Pool
 
 func main() {
 	root := &cobra.Command{
-		Use:   "shellvault-cli",
-		Short: "ShellVault Server Admin CLI",
+		Use:   "sshvault-cli",
+		Short: "SSHVault Server Admin CLI",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Skip DB connection for help commands
 			if cmd.Name() == "help" || cmd.Name() == "completion" {
@@ -41,8 +41,6 @@ func main() {
 	}
 
 	root.AddCommand(userCmd())
-	root.AddCommand(billingCmd())
-	root.AddCommand(couponCmd())
 	root.AddCommand(backupCmd())
 
 	if err := root.Execute(); err != nil {

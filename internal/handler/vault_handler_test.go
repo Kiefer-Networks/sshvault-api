@@ -70,47 +70,6 @@ func (m *mockVaultRepo) PruneHistory(_ context.Context, _ uuid.UUID, _ int) erro
 	return nil
 }
 
-// --- mock subscription repository ---
-
-type mockSubRepo struct {
-	sub *model.Subscription
-	err error
-}
-
-func (m *mockSubRepo) Create(_ context.Context, _ *model.Subscription) error {
-	return m.err
-}
-
-func (m *mockSubRepo) GetByUserID(_ context.Context, _ uuid.UUID) (*model.Subscription, error) {
-	return m.sub, m.err
-}
-
-func (m *mockSubRepo) GetByProviderSubID(_ context.Context, _ string) (*model.Subscription, error) {
-	return m.sub, m.err
-}
-
-func (m *mockSubRepo) Update(_ context.Context, _ *model.Subscription) error {
-	return m.err
-}
-
-// --- mock billing provider ---
-
-type mockBillingProvider struct{}
-
-func (m *mockBillingProvider) CreateCheckoutSession(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-func (m *mockBillingProvider) CreatePortalSession(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
-func (m *mockBillingProvider) HandleWebhook(_ context.Context, _, _ string) error {
-	return nil
-}
-
-func (m *mockBillingProvider) CancelSubscription(_ context.Context, _ string) error {
-	return nil
-}
-
 // --- helpers ---
 
 func newTestAuditLogger() *audit.Logger {
@@ -133,11 +92,10 @@ func (m *mockDeviceRepoForVault) UpdateLastSync(_ context.Context, _, _ uuid.UUI
 	return nil
 }
 
-func newVaultHandler(vaultRepo repository.VaultRepository, subRepo repository.SubscriptionRepository, billingEnabled bool) *VaultHandler {
+func newVaultHandler(vaultRepo repository.VaultRepository) *VaultHandler {
 	vs := service.NewVaultService(vaultRepo, nil, 10, 10)
-	bs := service.NewBillingService(subRepo, &mockBillingProvider{}, billingEnabled)
 	al := newTestAuditLogger()
-	return NewVaultHandler(vs, bs, &mockDeviceRepoForVault{}, al)
+	return NewVaultHandler(vs, &mockDeviceRepoForVault{}, al)
 }
 
 func blobChecksum(data []byte) string {
@@ -148,7 +106,7 @@ func blobChecksum(data []byte) string {
 // --- GetVault tests ---
 
 func TestGetVault_NoUserID(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/vault", nil)
 	rec := httptest.NewRecorder()
@@ -160,50 +118,8 @@ func TestGetVault_NoUserID(t *testing.T) {
 	}
 }
 
-func TestGetVault_BillingInactive(t *testing.T) {
-	// Billing enabled but no subscription
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, true)
-	userID := uuid.New()
-
-	req := httptest.NewRequest(http.MethodGet, "/vault", nil)
-	req = authedRequest(req, userID)
-	rec := httptest.NewRecorder()
-
-	h.GetVault(rec, req)
-
-	if rec.Code != http.StatusPaymentRequired {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusPaymentRequired)
-	}
-	msg := decodeError(t, rec)
-	if !strings.Contains(msg, "subscription") {
-		t.Errorf("error = %q, want message about subscription", msg)
-	}
-}
-
-func TestGetVault_BillingActive(t *testing.T) {
-	subRepo := &mockSubRepo{
-		sub: &model.Subscription{
-			ID:     uuid.New(),
-			Status: model.SubStatusActive,
-		},
-	}
-	h := newVaultHandler(&mockVaultRepo{}, subRepo, true)
-	userID := uuid.New()
-
-	req := httptest.NewRequest(http.MethodGet, "/vault", nil)
-	req = authedRequest(req, userID)
-	rec := httptest.NewRecorder()
-
-	h.GetVault(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
-}
-
 func TestGetVault_EmptyVault(t *testing.T) {
-	// Billing disabled (always active), no vault exists
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault", nil)
@@ -237,7 +153,7 @@ func TestGetVault_ExistingVault(t *testing.T) {
 			UpdatedAt: time.Now(),
 		},
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault", nil)
@@ -266,7 +182,7 @@ func TestGetVault_ServiceError(t *testing.T) {
 	vaultRepo := &mockVaultRepo{
 		err: fmt.Errorf("database error"),
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault", nil)
@@ -283,7 +199,7 @@ func TestGetVault_ServiceError(t *testing.T) {
 // --- PutVault tests ---
 
 func TestPutVault_NoUserID(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 
 	req := httptest.NewRequest(http.MethodPut, "/vault", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
@@ -295,23 +211,8 @@ func TestPutVault_NoUserID(t *testing.T) {
 	}
 }
 
-func TestPutVault_BillingInactive(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, true)
-	userID := uuid.New()
-
-	req := httptest.NewRequest(http.MethodPut, "/vault", strings.NewReader(`{}`))
-	req = authedRequest(req, userID)
-	rec := httptest.NewRecorder()
-
-	h.PutVault(rec, req)
-
-	if rec.Code != http.StatusPaymentRequired {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusPaymentRequired)
-	}
-}
-
 func TestPutVault_InvalidJSON(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodPut, "/vault", strings.NewReader(`not json`))
@@ -326,7 +227,7 @@ func TestPutVault_InvalidJSON(t *testing.T) {
 }
 
 func TestPutVault_VersionZero(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	body := `{"version":0,"blob":"AQID","checksum":"abc"}`
@@ -346,7 +247,7 @@ func TestPutVault_VersionZero(t *testing.T) {
 }
 
 func TestPutVault_EmptyBlob(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	body := `{"version":1,"blob":"","checksum":"abc"}`
@@ -366,7 +267,7 @@ func TestPutVault_EmptyBlob(t *testing.T) {
 }
 
 func TestPutVault_EmptyChecksum(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	body := `{"version":1,"blob":"AQID","checksum":""}`
@@ -387,7 +288,7 @@ func TestPutVault_EmptyChecksum(t *testing.T) {
 
 func TestPutVault_FirstSync_Success(t *testing.T) {
 	vaultRepo := &mockVaultRepo{}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	blob := []byte{1, 2, 3}
@@ -408,7 +309,7 @@ func TestPutVault_FirstSync_Success(t *testing.T) {
 
 func TestPutVault_ChecksumMismatch(t *testing.T) {
 	vaultRepo := &mockVaultRepo{}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	body := `{"version":1,"blob":"AQID","checksum":"wrong-checksum"}`
@@ -429,7 +330,7 @@ func TestPutVault_ChecksumMismatch(t *testing.T) {
 
 func TestPutVault_FirstSync_WrongVersion(t *testing.T) {
 	vaultRepo := &mockVaultRepo{} // nil vault = first sync
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	blob := []byte{1, 2, 3}
@@ -461,7 +362,7 @@ func TestPutVault_VersionConflict(t *testing.T) {
 			UpdatedAt: time.Now(),
 		},
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	blob := []byte{1, 2, 3}
@@ -483,7 +384,7 @@ func TestPutVault_VersionConflict(t *testing.T) {
 // --- GetHistory tests ---
 
 func TestGetHistory_NoUserID(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history", nil)
 	rec := httptest.NewRecorder()
@@ -496,7 +397,7 @@ func TestGetHistory_NoUserID(t *testing.T) {
 }
 
 func TestGetHistory_EmptyHistory(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history", nil)
@@ -523,7 +424,7 @@ func TestGetHistory_WithEntries(t *testing.T) {
 			{Version: 2, Checksum: "def", CreatedAt: time.Now()},
 		},
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history", nil)
@@ -549,7 +450,7 @@ func TestGetHistory_ServiceError(t *testing.T) {
 	vaultRepo := &mockVaultRepo{
 		err: fmt.Errorf("database error"),
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history", nil)
@@ -566,7 +467,7 @@ func TestGetHistory_ServiceError(t *testing.T) {
 // --- GetHistoryVersion tests ---
 
 func TestGetHistoryVersion_NoUserID(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history/1", nil)
 	rec := httptest.NewRecorder()
@@ -579,7 +480,7 @@ func TestGetHistoryVersion_NoUserID(t *testing.T) {
 }
 
 func TestGetHistoryVersion_InvalidVersion(t *testing.T) {
-	h := newVaultHandler(&mockVaultRepo{}, &mockSubRepo{}, false)
+	h := newVaultHandler(&mockVaultRepo{})
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history/abc", nil)
@@ -609,7 +510,7 @@ func TestGetHistoryVersion_NotFound(t *testing.T) {
 		},
 		history: []model.VaultHistory{}, // no history entries
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history/1", nil)
@@ -639,7 +540,7 @@ func TestGetHistoryVersion_Success(t *testing.T) {
 			{Version: 2, Blob: []byte{2}, Checksum: "def", CreatedAt: time.Now()},
 		},
 	}
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history/2", nil)
@@ -669,7 +570,7 @@ func TestGetHistoryVersion_Success(t *testing.T) {
 
 func TestGetHistoryVersion_NoVault(t *testing.T) {
 	vaultRepo := &mockVaultRepo{} // nil vault
-	h := newVaultHandler(vaultRepo, &mockSubRepo{}, false)
+	h := newVaultHandler(vaultRepo)
 	userID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/history/1", nil)

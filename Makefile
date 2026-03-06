@@ -1,11 +1,11 @@
 .PHONY: build build-cli run test lint migrate migrate-down docker-up docker-down clean
 
 # Variables
-BINARY=shellvault-server
-CLI_BINARY=shellvault-cli
+BINARY=sshvault-server
+CLI_BINARY=sshvault-cli
 CMD_DIR=./cmd/server
 CLI_DIR=./cmd/cli
-DATABASE_URL?=postgres://shellvault:shellvault@localhost:5432/shellvault?sslmode=disable
+DATABASE_URL?=postgres://sshvault:sshvault@localhost:5432/sshvault?sslmode=disable
 
 ## Build server
 build:

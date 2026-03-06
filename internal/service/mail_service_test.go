@@ -85,7 +85,7 @@ func TestSendVerificationEmailSuccess(t *testing.T) {
 	if email.To != "user@example.com" {
 		t.Errorf("To = %q, want %q", email.To, "user@example.com")
 	}
-	if email.Subject != "Verify your ShellVault email" {
+	if email.Subject != "Verify your SSHVault email" {
 		t.Errorf("Subject = %q, want verification subject", email.Subject)
 	}
 	if !strings.Contains(email.Body, "verify-token-123") {
@@ -173,7 +173,7 @@ func TestSendPasswordResetEmailSuccess(t *testing.T) {
 	if email.To != "user@example.com" {
 		t.Errorf("To = %q, want %q", email.To, "user@example.com")
 	}
-	if email.Subject != "Reset your ShellVault password" {
+	if email.Subject != "Reset your SSHVault password" {
 		t.Errorf("Subject = %q, want reset subject", email.Subject)
 	}
 	if !strings.Contains(email.Body, "reset-token-456") {

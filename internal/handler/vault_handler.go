@@ -13,29 +13,22 @@ import (
 )
 
 type VaultHandler struct {
-	vaultService   *service.VaultService
-	billingService *service.BillingService
-	deviceRepo     repository.DeviceRepository
-	audit          *audit.Logger
+	vaultService *service.VaultService
+	deviceRepo   repository.DeviceRepository
+	audit        *audit.Logger
 }
 
-func NewVaultHandler(vaultService *service.VaultService, billingService *service.BillingService, deviceRepo repository.DeviceRepository, auditLogger *audit.Logger) *VaultHandler {
+func NewVaultHandler(vaultService *service.VaultService, deviceRepo repository.DeviceRepository, auditLogger *audit.Logger) *VaultHandler {
 	return &VaultHandler{
-		vaultService:   vaultService,
-		billingService: billingService,
-		deviceRepo:     deviceRepo,
-		audit:          auditLogger,
+		vaultService: vaultService,
+		deviceRepo:   deviceRepo,
+		audit:        auditLogger,
 	}
 }
 
 func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
-		return
-	}
-
-	if !h.billingService.IsActive(r.Context(), userID) {
-		respondError(w, http.StatusPaymentRequired, "active subscription required")
 		return
 	}
 
@@ -55,11 +48,6 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
-		return
-	}
-
-	if !h.billingService.IsActive(r.Context(), userID) {
-		respondError(w, http.StatusPaymentRequired, "active subscription required")
 		return
 	}
 

@@ -46,8 +46,8 @@ func (m *JWTManager) GenerateTokenPair(userID uuid.UUID) (*TokenPair, string, er
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(accessExp),
-			Issuer:    "shellvault",
-			Audience:  jwt.ClaimStrings{"shellvault-api"},
+			Issuer:    "sshvault",
+			Audience:  jwt.ClaimStrings{"sshvault-api"},
 		},
 	}
 
@@ -73,7 +73,7 @@ func (m *JWTManager) ValidateAccessToken(tokenStr string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return m.publicKey, nil
-	}, jwt.WithAudience("shellvault-api"))
+	}, jwt.WithAudience("sshvault-api"))
 	if err != nil {
 		return nil, fmt.Errorf("parsing token: %w", err)
 	}

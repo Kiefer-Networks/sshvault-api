@@ -61,8 +61,8 @@ func backupCreateCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "warning: manifest write failed: %v\n", err)
 				return nil
 			}
-			fmt.Printf("Manifest created: %s (%d deleted users, %d canceled subs, %d revoked tokens)\n",
-				manifestPath, len(manifest.DeletedUsers), len(manifest.CanceledSubs), manifest.RevokedTokenCount)
+			fmt.Printf("Manifest created: %s (%d deleted users, %d revoked tokens)\n",
+				manifestPath, len(manifest.DeletedUsers), manifest.RevokedTokenCount)
 			return nil
 		},
 	}
@@ -86,7 +86,7 @@ func backupRestoreCmd() *cobra.Command {
 
 			fmt.Printf("RESTORE database from %s?\n", file)
 			fmt.Println("WARNING: This will overwrite the current database!")
-			fmt.Println("Deleted accounts and canceled subscriptions will be preserved.")
+			fmt.Println("Deleted accounts will be preserved.")
 			if !confirm() {
 				fmt.Println("Aborted.")
 				return nil
@@ -95,16 +95,16 @@ func backupRestoreCmd() *cobra.Command {
 			ctx := context.Background()
 
 			// Step 1: Pre-restore snapshot
-			fmt.Println("\n[1/5] Capturing pre-restore manifest...")
+			fmt.Println("\n[1/4] Capturing pre-restore manifest...")
 			preManifest, err := captureManifest(ctx, pool)
 			if err != nil {
 				return fmt.Errorf("pre-restore manifest: %w", err)
 			}
-			fmt.Printf("  Captured: %d deleted users, %d canceled subs, %d revoked tokens\n",
-				len(preManifest.DeletedUsers), len(preManifest.CanceledSubs), preManifest.RevokedTokenCount)
+			fmt.Printf("  Captured: %d deleted users, %d revoked tokens\n",
+				len(preManifest.DeletedUsers), preManifest.RevokedTokenCount)
 
 			// Step 2: Restore SQL dump
-			fmt.Println("\n[2/5] Restoring database...")
+			fmt.Println("\n[2/4] Restoring database...")
 			if err := restoreBackup(cfg.Database.URL, file); err != nil {
 				return err
 			}
@@ -123,39 +123,26 @@ func backupRestoreCmd() *cobra.Command {
 			}
 
 			// Step 3: Load backup manifest (if exists alongside the backup file)
-			fmt.Println("\n[3/5] Loading backup manifest...")
+			fmt.Println("\n[3/4] Loading backup manifest...")
 			var backupManifest *restoreManifest
 			manifestPath := strings.TrimSuffix(file, ".sql.gz") + ".manifest.json"
 			if bm, err := loadManifestFile(manifestPath); err == nil {
 				backupManifest = bm
-				fmt.Printf("  Loaded: %d deleted users, %d canceled subs\n",
-					len(bm.DeletedUsers), len(bm.CanceledSubs))
+				fmt.Printf("  Loaded: %d deleted users\n",
+					len(bm.DeletedUsers))
 			} else {
 				fmt.Println("  No backup manifest found, using pre-restore snapshot only.")
 			}
 
 			// Step 4: Merge and apply
-			fmt.Println("\n[4/5] Applying reconciliation...")
+			fmt.Println("\n[4/4] Applying reconciliation...")
 			merged := preManifest
 			if backupManifest != nil {
 				merged = mergeManifests(preManifest, backupManifest)
 			}
-			deletedUsers, canceledSubs, revokedTokens := applyManifest(ctx, pool, merged)
-			fmt.Printf("  Re-deleted %d user(s), re-canceled %d subscription(s), re-revoked %d token(s)\n",
-				deletedUsers, canceledSubs, revokedTokens)
-
-			// Step 5: Stripe reconciliation (if configured)
-			fmt.Println("\n[5/5] Stripe reconciliation...")
-			if cfg.Billing.StripeSecretKey != "" {
-				checked, corrected, err := reconcileStripe(ctx, pool, cfg.Billing.StripeSecretKey)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "  warning: Stripe reconciliation error: %v\n", err)
-				} else {
-					fmt.Printf("  Checked %d Stripe subscription(s), corrected %d\n", checked, corrected)
-				}
-			} else {
-				fmt.Println("  Skipped (STRIPE_SECRET_KEY not set)")
-			}
+			deletedUsers, revokedTokens := applyManifest(ctx, pool, merged)
+			fmt.Printf("  Re-deleted %d user(s), re-revoked %d token(s)\n",
+				deletedUsers, revokedTokens)
 
 			fmt.Println("\nRestore complete with reconciliation.")
 			return nil
@@ -267,7 +254,7 @@ func createBackup(databaseURL, dir string) (string, error) {
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("shellvault_%s.sql.gz", timestamp)
+	filename := fmt.Sprintf("sshvault_%s.sql.gz", timestamp)
 	path := filepath.Join(dir, filename)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -331,8 +318,8 @@ func createBackupManifest(backupPath string) {
 		fmt.Fprintf(os.Stderr, "  warning: manifest write failed: %v\n", err)
 		return
 	}
-	fmt.Printf("  Manifest: %d deleted users, %d canceled subs\n",
-		len(manifest.DeletedUsers), len(manifest.CanceledSubs))
+	fmt.Printf("  Manifest: %d deleted users\n",
+		len(manifest.DeletedUsers))
 }
 
 func restoreBackup(databaseURL, file string) error {

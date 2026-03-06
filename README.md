@@ -1,12 +1,12 @@
-# ShellVault Server
+# SSHVault Server
 
-Zero-Knowledge encrypted sync server for the ShellVault SSH client app.
+Zero-Knowledge encrypted sync server for the SSHVault SSH client app.
 
 Built by [Kiefer Networks](https://kiefer-networks.de).
 
 ## Architecture
 
-ShellVault uses a Zero-Knowledge architecture: the server never sees plaintext data. Clients encrypt everything locally using AES-256-GCM with Argon2id key derivation. The server stores only opaque encrypted blobs.
+SSHVault uses a Zero-Knowledge architecture: the server never sees plaintext data. Clients encrypt everything locally using AES-256-GCM with Argon2id key derivation. The server stores only opaque encrypted blobs.
 
 ### Key Features
 
@@ -92,7 +92,7 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recrea
 
 ## CLI Tool
 
-The `shellvault-cli` binary is included in the Docker image and provides admin commands for user management, billing, and database backups.
+The `sshvault-cli` binary is included in the Docker image and provides admin commands for user management, billing, and database backups.
 
 ### Using the CLI in Docker
 
@@ -103,29 +103,29 @@ Run CLI commands via `docker compose exec` against the running server container:
 COMPOSE="docker compose --env-file .env -f docker/docker-compose.yml"
 
 # User management
-$COMPOSE exec server ./shellvault-cli user list
-$COMPOSE exec server ./shellvault-cli user list --all        # include deleted
-$COMPOSE exec server ./shellvault-cli user info user@example.com
-$COMPOSE exec server ./shellvault-cli user deactivate user@example.com
-$COMPOSE exec server ./shellvault-cli user activate user@example.com
-$COMPOSE exec server ./shellvault-cli user delete user@example.com
-$COMPOSE exec server ./shellvault-cli user delete user@example.com --hard
+$COMPOSE exec server ./sshvault-cli user list
+$COMPOSE exec server ./sshvault-cli user list --all        # include deleted
+$COMPOSE exec server ./sshvault-cli user info user@example.com
+$COMPOSE exec server ./sshvault-cli user deactivate user@example.com
+$COMPOSE exec server ./sshvault-cli user activate user@example.com
+$COMPOSE exec server ./sshvault-cli user delete user@example.com
+$COMPOSE exec server ./sshvault-cli user delete user@example.com --hard
 
 # Billing / subscriptions
-$COMPOSE exec server ./shellvault-cli billing info user@example.com
-$COMPOSE exec server ./shellvault-cli billing set user@example.com --days 365
-$COMPOSE exec server ./shellvault-cli billing set user@example.com --provider stripe --status active --days 30
-$COMPOSE exec server ./shellvault-cli billing revoke user@example.com
+$COMPOSE exec server ./sshvault-cli billing info user@example.com
+$COMPOSE exec server ./sshvault-cli billing set user@example.com --days 365
+$COMPOSE exec server ./sshvault-cli billing set user@example.com --provider stripe --status active --days 30
+$COMPOSE exec server ./sshvault-cli billing revoke user@example.com
 
 # Database backups (manual)
-$COMPOSE exec server ./shellvault-cli backup create
-$COMPOSE exec server ./shellvault-cli backup list
-$COMPOSE exec server ./shellvault-cli backup restore /app/backups/shellvault_20260304_120000.sql.gz
+$COMPOSE exec server ./sshvault-cli backup create
+$COMPOSE exec server ./sshvault-cli backup list
+$COMPOSE exec server ./sshvault-cli backup restore /app/backups/sshvault_20260304_120000.sql.gz
 ```
 
 ### Automatic Backups
 
-The `docker-compose.yml` includes a dedicated `backup` service that runs `shellvault-cli backup auto` as a daemon. It creates compressed pg_dump backups on a configurable interval and prunes old backups automatically.
+The `docker-compose.yml` includes a dedicated `backup` service that runs `sshvault-cli backup auto` as a daemon. It creates compressed pg_dump backups on a configurable interval and prunes old backups automatically.
 
 Configure via environment variables:
 
@@ -145,8 +145,8 @@ $COMPOSE logs -f backup
 
 ```bash
 make build-cli
-./bin/shellvault-cli user list
-./bin/shellvault-cli backup create -o ./backups
+./bin/sshvault-cli user list
+./bin/sshvault-cli backup create -o ./backups
 ```
 
 ### CLI Command Reference
@@ -203,7 +203,7 @@ api.example.com {
     }
 
     log {
-        output file /var/log/caddy/shellvault.log
+        output file /var/log/caddy/sshvault.log
         format json
     }
 }
@@ -251,9 +251,9 @@ services:
   server:
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.shellvault.rule=Host(`api.example.com`)"
-      - "traefik.http.routers.shellvault.tls.certresolver=letsencrypt"
-      - "traefik.http.services.shellvault.loadbalancer.server.port=8080"
+      - "traefik.http.routers.sshvault.rule=Host(`api.example.com`)"
+      - "traefik.http.routers.sshvault.tls.certresolver=letsencrypt"
+      - "traefik.http.services.sshvault.loadbalancer.server.port=8080"
 
 volumes:
   letsencrypt:
@@ -352,7 +352,7 @@ Key environment variables:
 | `POSTGRES_PASSWORD` | Yes | — | PostgreSQL password (Docker Compose) |
 | `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
 | `SERVER_ENV` | No | `production` | `production` or `development` |
-| `SERVER_ID` | No | `shellvault-primary` | Server identity for attestation |
+| `SERVER_ID` | No | `sshvault-primary` | Server identity for attestation |
 | `APP_BASE_URL` | No | `https://app.sshvault.app` | Frontend URL (for emails, redirects) |
 | `API_BASE_URL` | No | `https://api.sshvault.app` | Public API URL |
 | `TRUSTED_PROXIES` | No | `127.0.0.1/8,::1/128` | CIDR ranges of trusted reverse proxies |

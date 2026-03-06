@@ -1,7 +1,7 @@
 # Binary
 /server
-/shellvault-server
-/shellvault-cli
+/sshvault-server
+/sshvault-cli
 
 # Environment
 .env
@@ -18,3 +18,4 @@ keys/
 
 # Backups
 backups/
+cli
