@@ -30,6 +30,10 @@ tags:
     description: Device management
   - name: Billing
     description: Subscription billing
+  - name: Attestation
+    description: Server identity attestation via Ed25519 signatures
+  - name: Audit
+    description: User activity audit logs
   - name: System
     description: Health checks
 
@@ -205,7 +209,7 @@ paths:
           description: Logged out
 
   /v1/auth/verify-email:
-    post:
+    get:
       tags: [Auth]
       summary: Verify email address
       operationId: verifyEmail
@@ -218,6 +222,16 @@ paths:
       responses:
         "200":
           description: Email verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: email verified
+        "400":
+          description: Invalid or expired token
 
   /v1/auth/forgot-password:
     post:
@@ -419,22 +433,6 @@ paths:
         "200":
           description: Password changed
 
-  /v1/devices:
-    get:
-      tags: [Devices]
-      summary: List user devices
-      operationId: listDevices
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Device"
-
   /v1/devices/{id}:
     delete:
       tags: [Devices]
@@ -623,6 +621,265 @@ paths:
         "200":
           description: Webhook processed
 
+  /v1/attestation:
+    get:
+      tags: [Attestation]
+      summary: Get signed server attestation
+      description: |
+        Returns a signed attestation proving server identity. The client provides a nonce
+        to prevent replay attacks. The server signs `server_id|timestamp|api_version|nonce`
+        with its Ed25519 private key.
+      operationId: getAttestation
+      parameters:
+        - name: nonce
+          in: query
+          required: true
+          description: Client-generated nonce (max 128 characters)
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        "200":
+          description: Signed attestation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestationResponse"
+        "400":
+          description: Nonce required or exceeds max length
+        "409":
+          description: Nonce already used
+
+  /v1/user/avatar:
+    put:
+      tags: [User]
+      summary: Update user avatar
+      operationId: updateAvatar
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  description: Base64-encoded avatar image (max 512 KB)
+                  maxLength: 524288
+      responses:
+        "200":
+          description: Avatar updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "413":
+          description: Avatar exceeds 512 KB size limit
+    delete:
+      tags: [User]
+      summary: Delete user avatar
+      operationId: deleteAvatar
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Avatar deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: avatar deleted
+
+  /v1/auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Revoke all sessions for the authenticated user
+      operationId: logoutAll
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: all sessions revoked
+        "500":
+          description: Failed to revoke sessions
+
+  /v1/audit:
+    get:
+      tags: [Audit]
+      summary: Get user audit logs
+      description: |
+        Returns paginated audit logs for the authenticated user. Supports filtering
+        by category, action, and time range.
+      operationId: getAuditLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [AUTH, VAULT, BILLING, DEVICE, USER, SYSTEM, WEBHOOK]
+          description: Filter by event category
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by specific action
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start of time range (RFC3339)
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End of time range (RFC3339)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum number of entries to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Number of entries to skip
+      responses:
+        "200":
+          description: Paginated audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditQueryResult"
+        "400":
+          description: Invalid filter parameters
+
+  /v1/devices:
+    get:
+      tags: [Devices]
+      summary: List user devices
+      operationId: listDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Device"
+    post:
+      tags: [Devices]
+      summary: Register a new device
+      operationId: registerDevice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Device display name
+                  maxLength: 255
+                platform:
+                  type: string
+                  description: Device platform (e.g. ios, android, linux, macos, windows)
+                  maxLength: 50
+                  default: unknown
+      responses:
+        "201":
+          description: Device registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Invalid request (name required or exceeds max length)
+
+  /v1/billing/redeem:
+    post:
+      tags: [Billing]
+      summary: Redeem a coupon code
+      operationId: redeemCoupon
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: Coupon code to redeem
+      responses:
+        "200":
+          description: Coupon redeemed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedeemResult"
+        "400":
+          description: Invalid code, expired, fully redeemed, or already used by this user
+
+  /v1/billing/success:
+    get:
+      tags: [Billing]
+      summary: Payment success page
+      description: Static HTML page shown after successful Stripe checkout. Returns HTML, not JSON.
+      operationId: billingSuccessPage
+      responses:
+        "200":
+          description: HTML success page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /v1/billing/cancel:
+    get:
+      tags: [Billing]
+      summary: Payment cancellation page
+      description: Static HTML page shown when a user cancels Stripe checkout. Returns HTML, not JSON.
+      operationId: billingCancelPage
+      responses:
+        "200":
+          description: HTML cancellation page
+          content:
+            text/html:
+              schema:
+                type: string
+
 components:
   securitySchemes:
     bearerAuth:
@@ -728,11 +985,19 @@ components:
         id:
           type: string
           format: uuid
+        user_id:
+          type: string
+          format: uuid
         name:
           type: string
         platform:
           type: string
         last_sync:
+          type: string
+          format: date-time
+        last_ip:
+          type: string
+        last_seen:
           type: string
           format: date-time
         created_at:
@@ -748,3 +1013,86 @@ components:
           type: string
         status:
           type: string
+
+    AttestationResponse:
+      type: object
+      properties:
+        server_id:
+          type: string
+          description: Unique server identifier
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp when attestation was created
+        api_version:
+          type: string
+          description: Server API version
+        nonce:
+          type: string
+          description: Client-provided nonce echoed back
+        signature:
+          type: string
+          description: Base64-encoded Ed25519 signature of "server_id|timestamp|api_version|nonce"
+
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [info, warn, error]
+        category:
+          type: string
+          enum: [AUTH, VAULT, BILLING, DEVICE, USER, SYSTEM, WEBHOOK]
+        action:
+          type: string
+        actor_id:
+          type: string
+          format: uuid
+        actor_email:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        request_id:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        duration_ms:
+          type: integer
+
+    AuditQueryResult:
+      type: object
+      properties:
+        audit_logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        total:
+          type: integer
+          description: Total number of matching entries
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    RedeemResult:
+      type: object
+      properties:
+        sync_granted:
+          type: boolean
+          description: Whether sync access was granted
+        sync_days:
+          type: integer
+          description: Number of days of sync access granted
