@@ -330,6 +330,7 @@ func main() {
 	r.Route("/v1", func(r chi.Router) {
 		// Attestation (public)
 		r.Get("/attestation", attestationHandler.GetAttestation)
+		r.Get("/attestation/pubkey", attestationHandler.GetPublicKey)
 
 		// Auth routes (public, with strict rate limiting and timing equalization)
 		r.Route("/auth", func(r chi.Router) {

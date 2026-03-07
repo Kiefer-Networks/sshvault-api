@@ -100,3 +100,15 @@ func (h *AttestationHandler) GetAttestation(w http.ResponseWriter, r *http.Reque
 
 	respondJSON(w, http.StatusOK, resp)
 }
+
+// PublicKeyResponse is the response for the public key endpoint.
+type PublicKeyResponse struct {
+	PublicKey string `json:"public_key"`
+}
+
+// GetPublicKey returns the server Ed25519 public key as base64-encoded JSON.
+func (h *AttestationHandler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	pubKey := h.privateKey.Public().(ed25519.PublicKey)
+	encoded := base64.StdEncoding.EncodeToString(pubKey)
+	respondJSON(w, http.StatusOK, PublicKeyResponse{PublicKey: encoded})
+}
