@@ -285,6 +285,7 @@ Base URL: `https://api.example.com`
 | `/v1/user/avatar` | DELETE | Yes | Delete avatar |
 | `/v1/audit` | GET | Yes | User activity log |
 | `/v1/attestation` | GET | No | Server attestation (Ed25519 signed) |
+| `/v1/attestation/pubkey` | GET | No | Attestation public key (for TOFU pinning) |
 
 Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
 
