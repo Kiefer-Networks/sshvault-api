@@ -2,7 +2,6 @@ package audit
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -130,12 +129,7 @@ func (l *Logger) LogFromRequest(r *http.Request, category Category, action Actio
 		entry.ActorID = &userID
 	}
 
-	// IP (strip port) and User-Agent from request
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr // fallback if no port
-	}
-	entry.IPAddress = ip
+	// User-Agent from request (IP intentionally not stored — zero-knowledge)
 	entry.UserAgent = r.UserAgent()
 
 	return &EntryBuilder{entry: entry, logger: l}

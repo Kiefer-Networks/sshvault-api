@@ -12,7 +12,6 @@ type Device struct {
 	Name      string     `json:"name"`
 	Platform  string     `json:"platform"`
 	LastSync  *time.Time `json:"last_sync,omitempty"`
-	LastIP    string     `json:"last_ip,omitempty"`
 	LastSeen  *time.Time `json:"last_seen,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 }

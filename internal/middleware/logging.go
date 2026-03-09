@@ -34,7 +34,6 @@ func RequestLogger(next http.Handler) http.Handler {
 			Int("status", wrapped.status).
 			Dur("duration", time.Since(start)).
 			Str("request_id", reqID).
-			Str("remote_addr", r.RemoteAddr).
 			Msg("request")
 	})
 }

@@ -88,7 +88,7 @@ func (m *mockDeviceRepoForVault) GetByUserID(_ context.Context, _ uuid.UUID) ([]
 	return nil, nil
 }
 func (m *mockDeviceRepoForVault) Delete(_ context.Context, _, _ uuid.UUID) error { return nil }
-func (m *mockDeviceRepoForVault) UpdateLastSync(_ context.Context, _, _ uuid.UUID, _ string) error {
+func (m *mockDeviceRepoForVault) UpdateLastSync(_ context.Context, _, _ uuid.UUID) error {
 	return nil
 }
 

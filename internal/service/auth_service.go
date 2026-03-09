@@ -202,7 +202,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 	// Check IP block
 	if s.bruteForce != nil && req.IP != "" {
 		if s.bruteForce.IsIPBlocked(ctx, req.IP) {
-			log.Warn().Str("ip", req.IP).Msg("login blocked: IP exceeded attempt threshold")
+			log.Warn().Msg("login blocked: IP exceeded attempt threshold")
 			return nil, fmt.Errorf("too many failed attempts, please try again later")
 		}
 	}
@@ -227,7 +227,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
 		}
-		log.Warn().Str("email", maskEmail(req.Email)).Str("ip", req.IP).Msg("login failed: unknown email")
+		log.Warn().Str("email", maskEmail(req.Email)).Msg("login failed: unknown email")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -236,7 +236,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
 		}
-		log.Warn().Str("email", maskEmail(req.Email)).Str("ip", req.IP).Msg("login failed: wrong password")
+		log.Warn().Str("email", maskEmail(req.Email)).Msg("login failed: wrong password")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -245,7 +245,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, true)
 		s.bruteForce.ClearAttempts(ctx, req.Email)
 	}
-	log.Info().Str("email", maskEmail(req.Email)).Str("ip", req.IP).Msg("login successful")
+	log.Info().Str("email", maskEmail(req.Email)).Msg("login successful")
 
 	return s.issueTokenPair(ctx, user, req.DeviceName)
 }

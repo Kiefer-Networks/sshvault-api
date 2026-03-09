@@ -2,12 +2,21 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
+
+// hashIP returns a SHA-256 hash of the IP address.
+// IPs are never stored in plaintext — only hashes for brute-force comparison.
+func hashIP(ip string) string {
+	h := sha256.Sum256([]byte(ip))
+	return hex.EncodeToString(h[:])
+}
 
 // maskEmail redacts the local part of an email address for log output.
 func maskEmail(email string) string {
@@ -41,9 +50,10 @@ func NewBruteForceGuard(pool *pgxpool.Pool) *BruteForceGuard {
 }
 
 // RecordAttempt logs a login attempt (success or failure).
+// IP is hashed before storage — plaintext IPs are never persisted.
 func (g *BruteForceGuard) RecordAttempt(ctx context.Context, email, ip string, success bool) {
 	query := `INSERT INTO login_attempts (email, ip_address, success, created_at) VALUES ($1, $2, $3, $4)`
-	if _, err := g.pool.Exec(ctx, query, email, ip, success, time.Now()); err != nil {
+	if _, err := g.pool.Exec(ctx, query, email, hashIP(ip), success, time.Now()); err != nil {
 		log.Error().Err(err).Str("email", maskEmail(email)).Msg("failed to record login attempt")
 	}
 }
@@ -80,6 +90,7 @@ func (g *BruteForceGuard) IsAccountLocked(ctx context.Context, email string) (bo
 }
 
 // IsIPBlocked checks if an IP has too many failed attempts across all accounts.
+// Comparison uses hashed IPs — plaintext is never queried.
 func (g *BruteForceGuard) IsIPBlocked(ctx context.Context, ip string) bool {
 	query := `
 		SELECT COUNT(*) FROM login_attempts
@@ -87,7 +98,7 @@ func (g *BruteForceGuard) IsIPBlocked(ctx context.Context, ip string) bool {
 
 	cutoff := time.Now().Add(-LockoutWindow)
 	var count int
-	if err := g.pool.QueryRow(ctx, query, ip, cutoff).Scan(&count); err != nil {
+	if err := g.pool.QueryRow(ctx, query, hashIP(ip), cutoff).Scan(&count); err != nil {
 		log.Error().Err(err).Msg("failed to check IP block")
 		return true // Fail-closed: assume blocked on DB error
 	}

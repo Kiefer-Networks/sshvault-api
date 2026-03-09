@@ -1,8 +1,16 @@
-# SSHVault Server
+<p align="center">
+  <img src="api/logo.png" alt="SSHVault" width="128" height="128">
+</p>
 
-Zero-Knowledge encrypted sync server for the SSHVault SSH client app.
+<h1 align="center">SSHVault Server</h1>
 
-Built by [Kiefer Networks](https://kiefer-networks.de).
+<p align="center">
+  Zero-Knowledge encrypted sync server for the <a href="https://github.com/Kiefer-Networks/sshvault">SSHVault</a> SSH client app.
+  <br>
+  Built by <a href="https://kiefer-networks.de">Kiefer Networks</a>.
+</p>
+
+---
 
 ## Architecture
 
@@ -12,8 +20,18 @@ SSHVault uses a Zero-Knowledge architecture: the server never sees plaintext dat
 
 - **Encrypted Blob Sync** with optimistic locking and version history
 - **Ed25519 JWT authentication** with refresh token rotation
-- **Self-Hosted friendly** — zero-knowledge design, server cannot read vault contents
+- **Zero-Knowledge IP privacy** — no plaintext IPs stored anywhere (hashed for brute-force only)
+- **Self-Hosted friendly** — server cannot read vault contents
 - **Admin CLI** for user management and database backups
+
+### Privacy by Design
+
+The server follows strict privacy principles:
+
+- **No IP logging** in application or audit logs
+- **No plaintext IP storage** in the database — brute-force protection uses SHA-256 hashed IPs
+- **Device tracking** records sync timestamps only, no IP addresses
+- **Audit log anonymization** on account deletion (30-day grace period)
 
 ## Quick Start
 
@@ -347,6 +365,14 @@ For self-hosted instances:
 
 ## Security
 
+### Zero-Knowledge Privacy
+
+- **No plaintext IPs** stored in the database or log files
+- Brute-force protection uses SHA-256 hashed IPs (irreversible)
+- Device sync tracking stores timestamps only, no network metadata
+- Audit logs contain no IP addresses
+- All vault data is encrypted client-side — server stores only opaque blobs
+
 ### Server Hardening
 
 - Binds to `127.0.0.1:8080` by default (not reachable from outside)
@@ -379,6 +405,11 @@ For self-hosted instances:
 - `Referrer-Policy: no-referrer`
 - `Cache-Control: no-store`
 - `Permissions-Policy` disables camera, microphone, geolocation, Topics API
+
+## Related
+
+- [SSHVault App](https://github.com/Kiefer-Networks/sshvault) — Flutter client (Android, iOS, macOS, Linux, Windows)
+- [API Documentation](api/openapi.yaml) — OpenAPI 3.1.0 specification
 
 ## License
 
