@@ -8,6 +8,38 @@ import (
 	"github.com/kiefernetworks/shellvault-server/internal/audit"
 )
 
+var validCategories = map[string]bool{
+	string(audit.CatAuth):   true,
+	string(audit.CatVault):  true,
+	string(audit.CatDevice): true,
+	string(audit.CatUser):   true,
+	string(audit.CatSystem): true,
+}
+
+var validActions = map[string]bool{
+	string(audit.ActRegister):       true,
+	string(audit.ActLogin):          true,
+	string(audit.ActLoginFailed):    true,
+	string(audit.ActRefreshToken):   true,
+	string(audit.ActLogout):         true,
+	string(audit.ActLogoutAll):      true,
+	string(audit.ActVerifyEmail):    true,
+	string(audit.ActForgotPassword): true,
+	string(audit.ActResetPassword):  true,
+	string(audit.ActSyncPull):       true,
+	string(audit.ActSyncPush):       true,
+	string(audit.ActHistoryView):    true,
+	string(audit.ActProfileView):    true,
+	string(audit.ActProfileUpdate):  true,
+	string(audit.ActPasswordChange): true,
+	string(audit.ActAccountDelete):  true,
+	string(audit.ActDeviceRegister): true,
+	string(audit.ActDeviceList):     true,
+	string(audit.ActDeviceDelete):   true,
+	string(audit.ActStartup):        true,
+	string(audit.ActShutdown):       true,
+}
+
 type AuditHandler struct {
 	repo *audit.Repository
 }
@@ -27,9 +59,17 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if cat := r.URL.Query().Get("category"); cat != "" {
+		if !validCategories[cat] {
+			respondError(w, http.StatusBadRequest, "invalid audit category")
+			return
+		}
 		filter.Category = cat
 	}
 	if act := r.URL.Query().Get("action"); act != "" {
+		if !validActions[act] {
+			respondError(w, http.StatusBadRequest, "invalid audit action")
+			return
+		}
 		filter.Action = act
 	}
 	if from := r.URL.Query().Get("from"); from != "" {

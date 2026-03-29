@@ -72,13 +72,13 @@ func (g *BruteForceGuard) IsAccountLocked(ctx context.Context, email string) (bo
 	}
 
 	if count >= MaxFailedAttempts {
-		// Find when the oldest relevant attempt was, calculate remaining lockout
-		var oldestAttempt time.Time
-		oldest := `
-			SELECT MIN(created_at) FROM login_attempts
+		// Find the most recent failed attempt to calculate remaining lockout
+		var newestAttempt time.Time
+		newest := `
+			SELECT MAX(created_at) FROM login_attempts
 			WHERE email = $1 AND NOT success AND created_at > $2`
-		if err := g.pool.QueryRow(ctx, oldest, email, cutoff).Scan(&oldestAttempt); err == nil {
-			remaining := LockoutWindow - time.Since(oldestAttempt)
+		if err := g.pool.QueryRow(ctx, newest, email, cutoff).Scan(&newestAttempt); err == nil {
+			remaining := LockoutWindow - time.Since(newestAttempt)
 			if remaining > 0 {
 				return true, remaining
 			}

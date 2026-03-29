@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"encoding/base64"
 	"net/http"
+	"strings"
 
 	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
@@ -117,7 +119,8 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
 }
 
-const maxAvatarBase64Size = 512 * 1024 // 512 KB base64
+const maxAvatarBase64Size = 512 * 1024
+const maxAvatarDecodedSize = 256 * 1024
 
 func (h *UserHandler) UpdateAvatar(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
@@ -136,6 +139,23 @@ func (h *UserHandler) UpdateAvatar(w http.ResponseWriter, r *http.Request) {
 	if len(req.Avatar) > maxAvatarBase64Size {
 		respondError(w, http.StatusRequestEntityTooLarge, "avatar must be at most 512 KB")
 		return
+	}
+
+	if req.Avatar != "" {
+		decoded, err := base64.StdEncoding.DecodeString(req.Avatar)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid avatar encoding")
+			return
+		}
+		if len(decoded) > maxAvatarDecodedSize {
+			respondError(w, http.StatusBadRequest, "avatar too large")
+			return
+		}
+		mime := http.DetectContentType(decoded)
+		if !strings.HasPrefix(mime, "image/") {
+			respondError(w, http.StatusBadRequest, "avatar must be an image")
+			return
+		}
 	}
 
 	user, err := h.userRepo.GetByID(r.Context(), userID)
