@@ -196,24 +196,91 @@ make build-cli
 
 ## Reverse Proxy Setup
 
-The server does not handle TLS itself. You **must** place a reverse proxy in front of it. Below are production-ready configurations for Traefik and Caddy.
+The server does not handle TLS itself. You **must** place a reverse proxy in front of it. Below are production-ready configurations for Caddy, Nginx, Apache, and Traefik.
+
+Each configuration includes optional security hardening directives (commented out). Uncomment the ones you need based on your threat model.
 
 ### Option A: Caddy (Recommended)
 
 Caddy handles TLS certificates automatically via Let's Encrypt.
 
-Create `/etc/caddy/Caddyfile`:
+Create a site config (e.g. `/etc/caddy/sites/sshvault.conf`):
 
 ```caddyfile
 api.example.com {
-    reverse_proxy 127.0.0.1:8080
+    # --- TLS Configuration ---
+    # Automatic HTTPS via Let's Encrypt by default.
+    # Uncomment to enforce TLS 1.3 only with strong ciphers:
+    # tls you@example.com {
+    #     protocols tls1.3
+    #     ciphers TLS_AES_128_GCM_SHA256 TLS_AES_256_GCM_SHA384 TLS_CHACHA20_POLY1305_SHA256
+    #     curves x25519 secp384r1
+    # }
 
+    # --- Security Headers ---
+    # Remove server identity headers to reduce information leakage:
     header {
         -Server
+        -X-Powered-By
+    }
+    # Uncomment to add strict security headers:
+    # header {
+    #     # Forces HTTPS for 2 years, including subdomains; submits to browser preload list:
+    #     Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    #     # Prevents MIME-type sniffing, which can lead to XSS via content-type confusion:
+    #     X-Content-Type-Options "nosniff"
+    #     # Blocks the page from being embedded in iframes, preventing clickjacking attacks:
+    #     X-Frame-Options "DENY"
+    #     # Controls how much referrer info is sent with requests to other origins:
+    #     Referrer-Policy "strict-origin-when-cross-origin"
+    #     # Disables browser features (camera, mic, geolocation) that this API does not need:
+    #     Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    #     # Disables the legacy XSS filter (modern browsers handle this natively):
+    #     X-XSS-Protection "0"
+    #     # Prevents the page from being paired with cross-origin popups (isolation):
+    #     Cross-Origin-Opener-Policy "same-origin"
+    #     # Restricts which origins can load this resource (same-origin only):
+    #     Cross-Origin-Resource-Policy "same-origin"
+    # }
+
+    # --- Request Size Limit ---
+    # Limits the maximum request body size to prevent abuse:
+    request_body {
+        max_size 10MB
     }
 
+    # --- Route Filtering ---
+    # Only proxy known API paths; redirect everything else to the app:
+    @api_paths {
+        path /health /ready /docs /docs/* /favicon.ico /v1/*
+    }
+    @not_api {
+        not path /health /ready /docs /docs/* /favicon.ico /v1/*
+    }
+    redir @not_api https://your-app-domain.com{uri} permanent
+
+    # --- Reverse Proxy ---
+    # Forwards requests to the SSHVault API server running on localhost:
+    reverse_proxy @api_paths 127.0.0.1:8080 {
+        # Passes the real client IP to the backend for rate limiting:
+        header_up X-Real-IP {remote_host}
+        header_up Host {host}
+
+        # Uncomment to set upstream timeouts (prevents hanging connections):
+        # transport http {
+        #     read_timeout 10s
+        #     write_timeout 15s
+        #     dial_timeout 5s
+        # }
+    }
+
+    # --- Logging ---
+    # Writes access logs in JSON format with automatic rotation:
     log {
-        output file /var/log/caddy/sshvault.log
+        output file /var/log/caddy/sshvault_api.log {
+            roll_size 100MiB
+            roll_keep 10
+        }
         format json
     }
 }
@@ -230,7 +297,176 @@ TRUSTED_PROXIES=127.0.0.1/8,::1/128
 API_BASE_URL=https://api.example.com
 ```
 
-### Option B: Traefik
+### Option B: Nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    # --- TLS Configuration ---
+    # Paths to your SSL certificate and private key (e.g. from Let's Encrypt):
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    # Uncomment to enforce TLS 1.2+ with strong ciphers only:
+    # ssl_protocols TLSv1.2 TLSv1.3;
+    # ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    # ssl_prefer_server_ciphers on;
+    # Uncomment to enable OCSP stapling (validates certificate status without client lookup):
+    # ssl_stapling on;
+    # ssl_stapling_verify on;
+
+    # --- Security Headers ---
+    # Uncomment to add strict security headers:
+    # # Forces HTTPS for 2 years, including subdomains; submits to browser preload list:
+    # add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    # # Prevents MIME-type sniffing, which can lead to XSS via content-type confusion:
+    # add_header X-Content-Type-Options "nosniff" always;
+    # # Blocks the page from being embedded in iframes, preventing clickjacking attacks:
+    # add_header X-Frame-Options "DENY" always;
+    # # Controls how much referrer info is sent with requests to other origins:
+    # add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # # Disables browser features (camera, mic, geolocation) that this API does not need:
+    # add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()" always;
+    # # Prevents the page from being paired with cross-origin popups (isolation):
+    # add_header Cross-Origin-Opener-Policy "same-origin" always;
+    # # Restricts which origins can load this resource (same-origin only):
+    # add_header Cross-Origin-Resource-Policy "same-origin" always;
+
+    # Hides the Nginx version from response headers to reduce information leakage:
+    server_tokens off;
+
+    # --- Request Size Limit ---
+    # Limits the maximum request body size to prevent abuse:
+    client_max_body_size 10M;
+
+    # --- Reverse Proxy ---
+    location / {
+        # Forwards requests to the SSHVault API server running on localhost:
+        proxy_pass http://127.0.0.1:8080;
+        # Passes the real client IP to the backend for rate limiting:
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+
+        # Uncomment to set upstream timeouts (prevents hanging connections):
+        # proxy_connect_timeout 5s;
+        # proxy_read_timeout 10s;
+        # proxy_send_timeout 15s;
+    }
+
+    # --- Logging ---
+    access_log /var/log/nginx/sshvault_api_access.log;
+    error_log  /var/log/nginx/sshvault_api_error.log;
+}
+
+# --- HTTP to HTTPS Redirect ---
+# Redirects all plain HTTP traffic to HTTPS:
+server {
+    listen 80;
+    server_name api.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/sshvault-api /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Set in `.env`:
+
+```
+TRUSTED_PROXIES=127.0.0.1/8,::1/128
+API_BASE_URL=https://api.example.com
+```
+
+### Option C: Apache
+
+```apache
+<VirtualHost *:443>
+    ServerName api.example.com
+
+    # --- TLS Configuration ---
+    # Enable SSL and set certificate paths (e.g. from Let's Encrypt):
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/api.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/api.example.com/privkey.pem
+
+    # Uncomment to enforce TLS 1.2+ with strong ciphers only:
+    # SSLProtocol -all +TLSv1.2 +TLSv1.3
+    # SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
+    # SSLHonorCipherOrder on
+
+    # --- Security Headers ---
+    # Uncomment to add strict security headers:
+    # # Forces HTTPS for 2 years, including subdomains; submits to browser preload list:
+    # Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    # # Prevents MIME-type sniffing, which can lead to XSS via content-type confusion:
+    # Header always set X-Content-Type-Options "nosniff"
+    # # Blocks the page from being embedded in iframes, preventing clickjacking attacks:
+    # Header always set X-Frame-Options "DENY"
+    # # Controls how much referrer info is sent with requests to other origins:
+    # Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # # Disables browser features (camera, mic, geolocation) that this API does not need:
+    # Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    # # Prevents the page from being paired with cross-origin popups (isolation):
+    # Header always set Cross-Origin-Opener-Policy "same-origin"
+    # # Restricts which origins can load this resource (same-origin only):
+    # Header always set Cross-Origin-Resource-Policy "same-origin"
+
+    # Hides the Apache version and OS from response headers:
+    ServerSignature Off
+    Header always unset X-Powered-By
+
+    # --- Request Size Limit ---
+    # Limits the maximum request body size to prevent abuse (10 MB):
+    LimitRequestBody 10485760
+
+    # --- Reverse Proxy ---
+    # Required modules: mod_proxy, mod_proxy_http, mod_headers
+    ProxyPreserveHost On
+    # Forwards requests to the SSHVault API server running on localhost:
+    ProxyPass / http://127.0.0.1:8080/
+    ProxyPassReverse / http://127.0.0.1:8080/
+
+    # Passes the real client IP to the backend for rate limiting:
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}e"
+    RequestHeader set X-Forwarded-Proto "https"
+
+    # Uncomment to set upstream timeouts (prevents hanging connections):
+    # ProxyTimeout 10
+    # Timeout 15
+
+    # --- Logging ---
+    ErrorLog  /var/log/apache2/sshvault_api_error.log
+    CustomLog /var/log/apache2/sshvault_api_access.log combined
+</VirtualHost>
+
+# --- HTTP to HTTPS Redirect ---
+# Redirects all plain HTTP traffic to HTTPS:
+<VirtualHost *:80>
+    ServerName api.example.com
+    Redirect permanent / https://api.example.com/
+</VirtualHost>
+```
+
+```bash
+sudo a2enmod proxy proxy_http headers ssl
+sudo a2ensite sshvault-api
+sudo apachectl configtest && sudo systemctl reload apache2
+```
+
+Set in `.env`:
+
+```
+TRUSTED_PROXIES=127.0.0.1/8,::1/128
+API_BASE_URL=https://api.example.com
+```
+
+### Option D: Traefik
 
 Create `traefik/docker-compose.override.yml` alongside the main compose file:
 
@@ -239,15 +475,23 @@ services:
   traefik:
     image: traefik:v3.0
     command:
+      # Disable the dashboard (not needed for API-only usage):
       - "--api.dashboard=false"
+      # Enable Docker provider to auto-discover services by labels:
       - "--providers.docker=true"
+      # Do not expose containers by default (only labeled ones):
       - "--providers.docker.exposedbydefault=false"
+      # Listen on port 80 for HTTP and port 443 for HTTPS:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+      # Redirect all HTTP traffic to HTTPS automatically:
       - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      # Use Let's Encrypt HTTP challenge for automatic TLS certificates:
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.letsencrypt.acme.email=admin@example.com"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # Uncomment to enforce TLS 1.3 only:
+      # - "--entrypoints.websecure.http.tls.options=strict@file"
     ports:
       - "80:80"
       - "443:443"
@@ -257,13 +501,31 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    # Uncomment to add security headers via middleware labels:
+    # labels:
+    #   # Forces HTTPS for 2 years, including subdomains:
+    #   - "traefik.http.middlewares.security-headers.headers.stsSeconds=63072000"
+    #   - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
+    #   - "traefik.http.middlewares.security-headers.headers.stsPreload=true"
+    #   # Prevents MIME-type sniffing:
+    #   - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+    #   # Blocks embedding in iframes:
+    #   - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+    #   # Controls referrer info sent to other origins:
+    #   - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
 
   server:
     labels:
+      # Enable Traefik for this container:
       - "traefik.enable=true"
+      # Route requests for api.example.com to this service:
       - "traefik.http.routers.sshvault.rule=Host(`api.example.com`)"
+      # Use Let's Encrypt for automatic TLS certificates:
       - "traefik.http.routers.sshvault.tls.certresolver=letsencrypt"
+      # Forward traffic to port 8080 inside the container:
       - "traefik.http.services.sshvault.loadbalancer.server.port=8080"
+      # Uncomment to apply the security headers middleware:
+      # - "traefik.http.routers.sshvault.middlewares=security-headers"
 
 volumes:
   letsencrypt:
