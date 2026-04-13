@@ -592,8 +592,8 @@ Key environment variables:
 | `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
 | `SERVER_ENV` | No | `production` | `production` or `development` |
 | `SERVER_ID` | No | `sshvault-primary` | Server identity for attestation |
-| `APP_BASE_URL` | No | `https://app.sshvault.app` | Frontend URL (for emails, redirects) |
-| `API_BASE_URL` | No | `https://api.sshvault.app` | Public API URL |
+| `APP_BASE_URL` | No | `https://app.example.com` | Frontend URL (for emails, redirects) |
+| `API_BASE_URL` | No | `https://api.example.com` | Public API URL |
 | `TRUSTED_PROXIES` | No | `127.0.0.1/8,::1/128` | CIDR ranges of trusted reverse proxies |
 | `CORS_ORIGINS` | No | — | Comma-separated allowed origins |
 | **Auth** | | | |
@@ -605,7 +605,7 @@ Key environment variables:
 | `SMTP_PORT` | No | `587` | SMTP port |
 | `SMTP_USER` | No | — | SMTP username |
 | `SMTP_PASS` | No | — | SMTP password |
-| `SMTP_FROM` | No | `noreply@sshvault.app` | Sender address |
+| `SMTP_FROM` | No | `noreply@example.com` | Sender address |
 | **Vault** | | | |
 | `VAULT_MAX_SIZE_MB` | No | `50` | Maximum vault blob size (MB) |
 | `VAULT_HISTORY_LIMIT` | No | `10` | Maximum stored vault versions |
