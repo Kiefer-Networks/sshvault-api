@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="api/logo.png" alt="SSHVault" width="128" height="128">
+  <img src="api/logo.png" alt="SSHVault Server" width="128" height="128">
 </p>
 
 <h1 align="center">SSHVault Server</h1>
@@ -8,6 +8,14 @@
   Zero-Knowledge encrypted sync server for the <a href="https://github.com/Kiefer-Networks/sshvault">SSHVault</a> SSH client app.
   <br>
   Built by <a href="https://kiefer-networks.de">Kiefer Networks</a>.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Kiefer-Networks/sshvault-api/releases"><img src="https://img.shields.io/github/v/release/Kiefer-Networks/sshvault-api?style=flat-square" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License: MIT"></a>
+  <a href="https://github.com/Kiefer-Networks/sshvault-api/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Kiefer-Networks/sshvault-api/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/Kiefer-Networks/sshvault-api/issues"><img src="https://img.shields.io/github/issues/Kiefer-Networks/sshvault-api?style=flat-square" alt="Issues"></a>
+  <a href="https://github.com/Kiefer-Networks/sshvault-api/stargazers"><img src="https://img.shields.io/github/stars/Kiefer-Networks/sshvault-api?style=flat-square" alt="Stars"></a>
 </p>
 
 ---
@@ -37,7 +45,7 @@ The server follows strict privacy principles:
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - PostgreSQL 16+
 - Docker & Docker Compose (optional)
 - A reverse proxy (Traefik or Caddy) for TLS termination
@@ -318,6 +326,7 @@ Key environment variables:
 | **Server** | | | |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `POSTGRES_PASSWORD` | Yes | — | PostgreSQL password (Docker Compose) |
+| `HOST_PORT` | No | `127.0.0.1:8080` | Host-side port mapping for Docker Compose |
 | `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
 | `SERVER_ENV` | No | `production` | `production` or `development` |
 | `SERVER_ID` | No | `sshvault-primary` | Server identity for attestation |
@@ -353,7 +362,7 @@ Key environment variables:
 | `LOG_COMPRESS` | No | `true` | Compress rotated log files |
 | **Audit** | | | |
 | `AUDIT_RETENTION_DAYS` | No | `365` | Audit log retention period |
-| `AUDIT_BUFFER_SIZE` | No | `1024` | Audit event buffer size |
+| `AUDIT_BUFFER_SIZE` | No | `4096` | Audit event buffer size |
 
 ## Self-Hosted
 
@@ -409,8 +418,17 @@ For self-hosted instances:
 ## Related
 
 - [SSHVault App](https://github.com/Kiefer-Networks/sshvault) — Flutter client (Android, iOS, macOS, Linux, Windows)
+- [Google Play](https://play.google.com/store/apps/details?id=de.kiefer_networks.sshvault) — Android download
 - [API Documentation](api/openapi.yaml) — OpenAPI 3.1.0 specification
 
+## Donate
+
+If you find SSHVault useful, consider supporting development:
+
+[Donate via Liberapay](https://de.liberapay.com/beli3ver)
+
 ## License
+
+Copyright (C) 2024-2026 [Kiefer Networks](https://kiefer-networks.de)
 
 This project is licensed under the [MIT License](LICENSE).
