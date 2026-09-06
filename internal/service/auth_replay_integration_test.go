@@ -164,8 +164,8 @@ func TestConcurrentRefreshHasOneSuccessAndRevokesFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.SessionVersion != initial.User.SessionVersion+3 {
-		t.Fatalf("replays not committed: version=%d", current.SessionVersion)
+	if current.SessionVersion != initial.User.SessionVersion+1 {
+		t.Fatalf("current-session replay should revoke once: version=%d", current.SessionVersion)
 	}
 }
 

@@ -362,6 +362,9 @@ func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthRe
 		if current == nil {
 			return invalid
 		}
+		if current.SessionVersion != user.SessionVersion {
+			return invalid
+		}
 		if current.ConsumedAt != nil {
 			// Commit revocation before returning the authentication failure. Session
 			// versions are user-wide, so revoke all refresh credentials at that boundary.
@@ -373,9 +376,6 @@ func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthRe
 			}
 			replay = true
 			return nil
-		}
-		if current.SessionVersion != user.SessionVersion {
-			return invalid
 		}
 		consumed, err := s.tokenRepo.ConsumeRefreshToken(txCtx, hash)
 		if err != nil {
