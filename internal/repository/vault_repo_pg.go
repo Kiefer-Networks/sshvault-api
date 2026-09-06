@@ -38,6 +38,19 @@ func (r *pgVaultRepo) GetByUserID(ctx context.Context, userID uuid.UUID) (*model
 	return &vault, nil
 }
 
+func (r *pgVaultRepo) GetMetadataByUserID(ctx context.Context, userID uuid.UUID) (*model.Vault, error) {
+	query := `SELECT id, user_id, version, checksum, updated_at FROM vaults WHERE user_id = $1`
+	var vault model.Vault
+	err := r.pool.QueryRow(ctx, query, userID).Scan(&vault.ID, &vault.UserID, &vault.Version, &vault.Checksum, &vault.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting vault metadata: %w", err)
+	}
+	return &vault, nil
+}
+
 func (r *pgVaultRepo) Create(ctx context.Context, vault *model.Vault) error {
 	query := `
 		INSERT INTO vaults (id, user_id, version, blob, checksum, updated_at)

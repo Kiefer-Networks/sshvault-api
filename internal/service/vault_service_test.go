@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,9 @@ import (
 // --- Mock Vault Repository ---
 
 type mockVaultRepo struct {
-	vaults    map[uuid.UUID]*model.Vault // key: userID
-	histories map[uuid.UUID][]model.VaultHistory
+	vaults         map[uuid.UUID]*model.Vault // key: userID
+	histories      map[uuid.UUID][]model.VaultHistory
+	rejectBlobRead bool
 }
 
 func newMockVaultRepo() *mockVaultRepo {
@@ -28,8 +30,15 @@ func newMockVaultRepo() *mockVaultRepo {
 }
 
 func (m *mockVaultRepo) GetByUserID(_ context.Context, userID uuid.UUID) (*model.Vault, error) {
+	if m.rejectBlobRead {
+		return nil, errors.New("full vault read attempted")
+	}
 	v := m.vaults[userID]
 	return v, nil
+}
+
+func (m *mockVaultRepo) GetMetadataByUserID(_ context.Context, userID uuid.UUID) (*model.Vault, error) {
+	return m.vaults[userID], nil
 }
 
 func (m *mockVaultRepo) Create(_ context.Context, vault *model.Vault) error {
@@ -249,5 +258,22 @@ func TestGetHistoryVersionNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("error = %q, want 'not found'", err.Error())
+	}
+}
+
+func TestHistoryEndpointsDoNotReadCurrentBlob(t *testing.T) {
+	repo := newMockVaultRepo()
+	userID := uuid.New()
+	vaultID := uuid.New()
+	repo.vaults[userID] = &model.Vault{ID: vaultID, UserID: userID, Version: 2, Blob: make([]byte, MaxVaultSizeBytes)}
+	repo.histories[vaultID] = []model.VaultHistory{{VaultID: vaultID, Version: 1, Blob: []byte("old")}}
+	repo.rejectBlobRead = true
+	svc := NewVaultService(repo, nil, 15, 20)
+
+	if _, err := svc.GetHistory(context.Background(), userID); err != nil {
+		t.Fatalf("history metadata read current blob: %v", err)
+	}
+	if _, err := svc.GetHistoryVersion(context.Background(), userID, 1); err != nil {
+		t.Fatalf("history version read current blob: %v", err)
 	}
 }

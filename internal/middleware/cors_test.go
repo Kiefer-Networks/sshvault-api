@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	"github.com/go-chi/cors"
 )
 
 func TestCORSOptions_DefaultOrigins(t *testing.T) {
@@ -71,7 +75,7 @@ func TestCORSOptions_AllowedMethods(t *testing.T) {
 func TestCORSOptions_AllowedHeaders(t *testing.T) {
 	opts := CORSOptions("")
 
-	expected := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce"}
+	expected := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce", "X-Device-ID"}
 	if !reflect.DeepEqual(opts.AllowedHeaders, expected) {
 		t.Errorf("AllowedHeaders = %v, want %v", opts.AllowedHeaders, expected)
 	}
@@ -117,9 +121,25 @@ func TestCORSOptions_CustomOriginsPreserveOtherSettings(t *testing.T) {
 		t.Errorf("AllowedMethods = %v, want %v", opts.AllowedMethods, expectedMethods)
 	}
 
-	expectedHeaders := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce"}
+	expectedHeaders := []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-PoW-Challenge", "X-PoW-Nonce", "X-Device-ID"}
 	if !reflect.DeepEqual(opts.AllowedHeaders, expectedHeaders) {
 		t.Errorf("AllowedHeaders = %v, want %v", opts.AllowedHeaders, expectedHeaders)
+	}
+}
+
+func TestCORSPreflightAllowsDeviceID(t *testing.T) {
+	handler := cors.Handler(CORSOptions("https://app.example.com"))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodOptions, "/v1/vault", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,x-device-id")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example.com" {
+		t.Fatalf("device preflight rejected: headers=%v", rec.Header())
 	}
 }
 
