@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/big"
 	"os"
 	"time"
 
@@ -82,6 +85,14 @@ func loadManifestFile(path string) (*restoreManifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parsing manifest: %w", err)
 	}
+	if m.CreatedAt.IsZero() || m.RevokedTokenCount < 0 {
+		return nil, fmt.Errorf("invalid manifest metadata")
+	}
+	for _, u := range m.DeletedUsers {
+		if u.ID == uuid.Nil || u.DeletedAt.IsZero() {
+			return nil, fmt.Errorf("invalid deleted user in manifest")
+		}
+	}
 	return &m, nil
 }
 
@@ -109,37 +120,25 @@ func mergeManifests(a, b *restoreManifest) *restoreManifest {
 	return merged
 }
 
-func applyManifest(ctx context.Context, p *pgxpool.Pool, m *restoreManifest) (deletedUsers, revokedTokens int) {
-	// Re-delete users that were deleted before the restore
-	for _, u := range m.DeletedUsers {
-		result, err := p.Exec(ctx,
-			`UPDATE users SET deleted_at = $1, updated_at = now()
-			 WHERE id = $2 AND deleted_at IS NULL`, u.DeletedAt, u.ID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: failed to re-delete user %s: %v\n", u.Email, err)
-			continue
-		}
-		if result.RowsAffected() > 0 {
-			deletedUsers++
-			// Also revoke tokens for re-deleted users
-			if _, err := p.Exec(ctx,
-				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE`,
-				u.ID); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: failed to revoke tokens for %s: %v\n", u.Email, err)
-			}
-		}
-	}
-
-	// Re-revoke tokens for all deleted users (catch-all)
-	result, err := p.Exec(ctx,
-		`UPDATE refresh_tokens SET revoked = TRUE
-		 WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL)
-		   AND revoked = FALSE`)
+// Values are rendered exclusively from typed UUIDs and times, never email/input SQL.
+func appendManifestSQL(w io.Writer, m *restoreManifest) error {
+	// Fresh generation prevents access JWTs from an older database state becoming valid.
+	version, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: failed to re-revoke tokens: %v\n", err)
-	} else {
-		revokedTokens = int(result.RowsAffected())
+		return fmt.Errorf("generating session version: %w", err)
+	}
+	version.Add(version, big.NewInt(1))
+	if _, err := fmt.Fprintf(w, "\nALTER TABLE public.users ADD COLUMN IF NOT EXISTS session_version BIGINT NOT NULL DEFAULT 0;\nUPDATE public.users SET session_version = %s;\n", version.String()); err != nil {
+		return err
 	}
 
-	return
+	if _, err := fmt.Fprintln(w, "\nUPDATE public.refresh_tokens SET revoked = TRUE WHERE revoked = FALSE;\nUPDATE public.verification_tokens SET used = TRUE WHERE used = FALSE;"); err != nil {
+		return err
+	}
+	for _, u := range m.DeletedUsers {
+		if _, err := fmt.Fprintf(w, "UPDATE public.users SET deleted_at = '%s', updated_at = now() WHERE id = '%s' AND deleted_at IS NULL;\n", u.DeletedAt.UTC().Format(time.RFC3339Nano), u.ID.String()); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -1,15 +1,17 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
 	"github.com/kiefernetworks/shellvault-server/internal/config"
@@ -43,29 +45,15 @@ func backupCreateCmd() *cobra.Command {
 				dir = output
 			}
 
-			path, err := createBackup(cfg.Database.URL, dir)
+			path, err := createBackupWithManifest(cfg.Database.URL, dir)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Backup created: %s\n", path)
-
-			// Create manifest alongside the SQL dump
-			ctx := context.Background()
-			manifest, err := captureManifest(ctx, pool)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "warning: manifest creation failed: %v\n", err)
-				return nil
-			}
-			manifestPath := strings.TrimSuffix(path, ".sql.gz") + ".manifest.json"
-			if err := writeManifestFile(manifest, manifestPath); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: manifest write failed: %v\n", err)
-				return nil
-			}
-			fmt.Printf("Manifest created: %s (%d deleted users, %d revoked tokens)\n",
-				manifestPath, len(manifest.DeletedUsers), manifest.RevokedTokenCount)
+			fmt.Printf("Backup and manifest created: %s\n", path)
 			return nil
 		},
 	}
+
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output directory (default from BACKUP_DIR)")
 	return cmd
 }
@@ -86,7 +74,7 @@ func backupRestoreCmd() *cobra.Command {
 
 			fmt.Printf("RESTORE database from %s?\n", file)
 			fmt.Println("WARNING: This will overwrite the current database!")
-			fmt.Println("Deleted accounts will be preserved.")
+			fmt.Println("Only deleted accounts retained in the database or backup manifest can be preserved.")
 			if !confirm() {
 				fmt.Println("Aborted.")
 				return nil
@@ -94,61 +82,31 @@ func backupRestoreCmd() *cobra.Command {
 
 			ctx := context.Background()
 
-			// Step 1: Pre-restore snapshot
-			fmt.Println("\n[1/4] Capturing pre-restore manifest...")
-			preManifest, err := captureManifest(ctx, pool)
-			if err != nil {
-				return fmt.Errorf("pre-restore manifest: %w", err)
+			manifest := &restoreManifest{}
+			if !skipReconcile {
+				manifest, err = captureManifest(ctx, pool)
+				if err != nil {
+					return fmt.Errorf("pre-restore manifest: %w", err)
+				}
+				manifestPath := strings.TrimSuffix(file, ".sql.gz") + ".manifest.json"
+				bm, loadErr := loadManifestFile(manifestPath)
+				if loadErr == nil {
+					manifest = mergeManifests(manifest, bm)
+				} else if !errors.Is(loadErr, os.ErrNotExist) {
+					return fmt.Errorf("backup manifest: %w", loadErr)
+				} else {
+					fmt.Println("No backup manifest found; preserving retained pre-restore tombstones only.")
+				}
 			}
-			fmt.Printf("  Captured: %d deleted users, %d revoked tokens\n",
-				len(preManifest.DeletedUsers), preManifest.RevokedTokenCount)
-
-			// Step 2: Restore SQL dump
-			fmt.Println("\n[2/4] Restoring database...")
-			if err := restoreBackup(cfg.Database.URL, file); err != nil {
+			// Reconciliation executes before COMMIT, so any error rolls back the restore.
+			if err := restoreBackup(cfg.Database.URL, file, manifest); err != nil {
 				return err
 			}
-			fmt.Println("  Database restored.")
-
-			if skipReconcile {
-				fmt.Println("\nReconciliation skipped (--no-reconcile).")
-				return nil
-			}
-
-			// Reconnect pool after restore
-			pool.Close()
-			pool, err = pgxpool.New(ctx, cfg.Database.URL)
-			if err != nil {
-				return fmt.Errorf("reconnecting after restore: %w", err)
-			}
-
-			// Step 3: Load backup manifest (if exists alongside the backup file)
-			fmt.Println("\n[3/4] Loading backup manifest...")
-			var backupManifest *restoreManifest
-			manifestPath := strings.TrimSuffix(file, ".sql.gz") + ".manifest.json"
-			if bm, err := loadManifestFile(manifestPath); err == nil {
-				backupManifest = bm
-				fmt.Printf("  Loaded: %d deleted users\n",
-					len(bm.DeletedUsers))
-			} else {
-				fmt.Println("  No backup manifest found, using pre-restore snapshot only.")
-			}
-
-			// Step 4: Merge and apply
-			fmt.Println("\n[4/4] Applying reconciliation...")
-			merged := preManifest
-			if backupManifest != nil {
-				merged = mergeManifests(preManifest, backupManifest)
-			}
-			deletedUsers, revokedTokens := applyManifest(ctx, pool, merged)
-			fmt.Printf("  Re-deleted %d user(s), re-revoked %d token(s)\n",
-				deletedUsers, revokedTokens)
-
-			fmt.Println("\nRestore complete with reconciliation.")
+			fmt.Println("Restore complete. All restored access sessions, refresh tokens and verification tokens invalidated.")
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&skipReconcile, "no-reconcile", false, "Skip post-restore reconciliation")
+	cmd.Flags().BoolVar(&skipReconcile, "no-reconcile", false, "Skip deleted-account reconciliation (tokens are still invalidated)")
 	return cmd
 }
 
@@ -217,12 +175,11 @@ func backupAutoCmd() *cobra.Command {
 			fmt.Println()
 
 			// First backup immediately
-			path, err := createBackup(cfg.Database.URL, cfg.Backup.Dir)
+			path, err := createBackupWithManifest(cfg.Database.URL, cfg.Backup.Dir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "initial backup failed: %v\n", err)
 			} else {
 				fmt.Printf("[%s] Backup created: %s\n", time.Now().Format(time.RFC3339), path)
-				createBackupManifest(path)
 			}
 			pruneBackups(cfg.Backup.Dir, cfg.Backup.Retention)
 
@@ -230,13 +187,12 @@ func backupAutoCmd() *cobra.Command {
 			defer ticker.Stop()
 
 			for t := range ticker.C {
-				path, err := createBackup(cfg.Database.URL, cfg.Backup.Dir)
+				path, err := createBackupWithManifest(cfg.Database.URL, cfg.Backup.Dir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[%s] backup failed: %v\n", t.Format(time.RFC3339), err)
 					continue
 				}
 				fmt.Printf("[%s] Backup created: %s\n", t.Format(time.RFC3339), path)
-				createBackupManifest(path)
 				pruneBackups(cfg.Backup.Dir, cfg.Backup.Retention)
 			}
 			return nil
@@ -248,115 +204,100 @@ func backupAutoCmd() *cobra.Command {
 // BACKUP HELPERS
 // ============================================================
 
-func createBackup(databaseURL, dir string) (string, error) {
+func createBackup(databaseURL, dir string) (path string, err error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("creating backup dir: %w", err)
 	}
-
-	timestamp := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("sshvault_%s.sql.gz", timestamp)
-	path := filepath.Join(dir, filename)
-
+	out, err := os.CreateTemp(dir, "sshvault_"+time.Now().Format("20060102_150405")+"_*.sql.gz")
+	if err != nil {
+		return "", fmt.Errorf("creating backup file: %w", err)
+	}
+	path = out.Name()
+	defer func() {
+		_ = out.Close()
+		if err != nil {
+			_ = os.Remove(out.Name())
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-
-	// Safe exec: no shell interpolation
-	dump := exec.CommandContext(ctx, "pg_dump", "--no-owner", "--no-acl", databaseURL)
-	gzipCmd := exec.CommandContext(ctx, "gzip")
-
-	// Pipe pg_dump stdout into gzip stdin
-	pipe, err := dump.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("creating pipe: %w", err)
+	compressed := gzip.NewWriter(out)
+	dump := exec.CommandContext(ctx, "pg_dump", "--clean", "--if-exists", "--no-owner", "--no-acl", databaseURL)
+	dump.Stdout = compressed
+	var stderr strings.Builder
+	dump.Stderr = &stderr
+	if err = dump.Run(); err != nil {
+		_ = compressed.Close()
+		return "", fmt.Errorf("pg_dump failed: %w\n%s", err, stderr.String())
 	}
-	gzipCmd.Stdin = pipe
-
-	outFile, err := os.Create(path)
-	if err != nil {
-		return "", fmt.Errorf("creating output file: %w", err)
+	if err = compressed.Close(); err != nil {
+		return "", fmt.Errorf("compressing backup: %w", err)
 	}
-	defer func() { _ = outFile.Close() }()
-
-	gzipCmd.Stdout = outFile
-
-	var dumpStderr, gzipStderr strings.Builder
-	dump.Stderr = &dumpStderr
-	gzipCmd.Stderr = &gzipStderr
-
-	if err := gzipCmd.Start(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("starting gzip: %w", err)
+	if err = out.Close(); err != nil {
+		return "", fmt.Errorf("closing backup: %w", err)
 	}
-	if err := dump.Run(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("pg_dump failed: %w\n%s", err, dumpStderr.String())
-	}
-	if err := gzipCmd.Wait(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("gzip failed: %w\n%s", err, gzipStderr.String())
-	}
-
-	// Verify file was created and has content
-	info, err := os.Stat(path)
-	if err != nil || info.Size() == 0 {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("backup file is empty or missing")
-	}
-
 	return path, nil
 }
 
-func createBackupManifest(backupPath string) {
-	ctx := context.Background()
-	manifest, err := captureManifest(ctx, pool)
+func createBackupWithManifest(databaseURL, dir string) (string, error) {
+	manifest, err := captureManifest(context.Background(), pool)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: manifest creation failed: %v\n", err)
-		return
+		return "", fmt.Errorf("capturing backup manifest: %w", err)
 	}
-	manifestPath := strings.TrimSuffix(backupPath, ".sql.gz") + ".manifest.json"
+	path, err := createBackup(databaseURL, dir)
+	if err != nil {
+		return "", err
+	}
+	manifestPath := strings.TrimSuffix(path, ".sql.gz") + ".manifest.json"
 	if err := writeManifestFile(manifest, manifestPath); err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: manifest write failed: %v\n", err)
-		return
+		_ = os.Remove(path)
+		_ = os.Remove(manifestPath)
+		return "", err
 	}
-	fmt.Printf("  Manifest: %d deleted users\n",
-		len(manifest.DeletedUsers))
+	return path, nil
 }
 
-func restoreBackup(databaseURL, file string) error {
-	info, err := os.Stat(file)
+// Validate the complete compressed stream before opening a database transaction.
+// Staging on disk also prevents decompression errors from committing partial SQL.
+func restoreBackup(databaseURL, file string, manifest *restoreManifest) error {
+	input, err := os.Open(file)
 	if err != nil {
-		return fmt.Errorf("backup file not found: %s", file)
+		return fmt.Errorf("opening backup: %w", err)
 	}
-	if info.Size() == 0 {
-		return fmt.Errorf("backup file is empty: %s", file)
+	defer input.Close()
+	compressed, err := gzip.NewReader(input)
+	if err != nil {
+		return fmt.Errorf("opening compressed backup: %w", err)
 	}
-
+	defer compressed.Close()
+	staged, err := os.CreateTemp("", "sshvault-restore-*.sql")
+	if err != nil {
+		return fmt.Errorf("staging restore: %w", err)
+	}
+	defer func() { _ = staged.Close(); _ = os.Remove(staged.Name()) }()
+	size, err := io.Copy(staged, compressed)
+	if err != nil {
+		return fmt.Errorf("validating backup: %w", err)
+	}
+	if size == 0 {
+		return fmt.Errorf("backup SQL is empty")
+	}
+	if manifest != nil {
+		if err := appendManifestSQL(staged, manifest); err != nil {
+			return err
+		}
+	}
+	if _, err := staged.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-
-	// Safe exec: no shell interpolation
-	gunzip := exec.CommandContext(ctx, "gunzip", "-c", file)
-	psql := exec.CommandContext(ctx, "psql", databaseURL)
-
-	// Pipe gunzip stdout into psql stdin
-	pipe, err := gunzip.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("creating pipe: %w", err)
-	}
-	psql.Stdin = pipe
-
-	var gunzipStderr, psqlStderr strings.Builder
-	gunzip.Stderr = &gunzipStderr
-	psql.Stderr = &psqlStderr
-
-	if err := psql.Start(); err != nil {
-		return fmt.Errorf("starting psql: %w", err)
-	}
-	if err := gunzip.Run(); err != nil {
-		return fmt.Errorf("gunzip failed: %w\n%s", err, gunzipStderr.String())
-	}
-	if err := psql.Wait(); err != nil {
-		return fmt.Errorf("psql failed: %w\n%s", err, psqlStderr.String())
+	psql := exec.CommandContext(ctx, "psql", "-X", "--set=ON_ERROR_STOP=on", "--single-transaction", "--file=-", databaseURL)
+	psql.Stdin = staged
+	var stderr strings.Builder
+	psql.Stderr = &stderr
+	if err := psql.Run(); err != nil {
+		return fmt.Errorf("psql restore failed: %w\n%s", err, stderr.String())
 	}
 	return nil
 }
@@ -383,6 +324,7 @@ func pruneBackups(dir string, keep int) {
 	for _, e := range toDelete {
 		path := filepath.Join(dir, e.Name())
 		if err := os.Remove(path); err == nil {
+			_ = os.Remove(strings.TrimSuffix(path, ".sql.gz") + ".manifest.json")
 			fmt.Printf("  Pruned old backup: %s\n", e.Name())
 		}
 	}
