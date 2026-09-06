@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
 )
@@ -20,13 +21,14 @@ type queuedMail struct{ purpose, email, token string }
 // MailDispatcher uses a fixed worker count and a bounded, non-blocking queue.
 // Request contexts do not own delivery after enqueue; Stop owns its cancellation.
 type MailDispatcher struct {
-	delivery MailDelivery
-	queue    chan queuedMail
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.RWMutex
-	stopped  bool
-	done     chan struct{}
+	unconfirmed atomic.Int64
+	delivery    MailDelivery
+	queue       chan queuedMail
+	ctx         context.Context
+	cancel      context.CancelFunc
+	mu          sync.RWMutex
+	stopped     bool
+	done        chan struct{}
 }
 
 func NewMailDispatcher(delivery MailDelivery, capacity, workers int) *MailDispatcher {
@@ -52,10 +54,12 @@ func (d *MailDispatcher) enqueue(ctx context.Context, purpose, email, token stri
 	if d.stopped {
 		return ErrMailDispatcherStopped
 	}
+	d.unconfirmed.Add(1)
 	select {
 	case d.queue <- queuedMail{purpose, email, token}:
 		return nil
 	default:
+		d.unconfirmed.Add(-1)
 		return ErrMailQueueFull
 	}
 }
@@ -84,6 +88,8 @@ func (d *MailDispatcher) work() {
 		}
 		if err != nil {
 			log.Warn().Str("purpose", message.purpose).Msg("mail delivery failed")
+		} else {
+			d.unconfirmed.Add(-1)
 		}
 	}
 }
@@ -105,3 +111,6 @@ func (d *MailDispatcher) Stop(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+// Unconfirmed counts accepted messages without a confirmed successful delivery.
+func (d *MailDispatcher) Unconfirmed() int64 { return d.unconfirmed.Load() }

@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 
@@ -34,7 +36,17 @@ func decodeJSON(r *http.Request, v any) error {
 	defer func() { _ = r.Body.Close() }()
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(v)
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("request must contain one JSON value")
+	}
+	return nil
 }
 
 // clientIP extracts the IP address from r.RemoteAddr, stripping the port.

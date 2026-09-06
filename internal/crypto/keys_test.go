@@ -115,3 +115,44 @@ func TestSignAndVerifyWithSavedKey(t *testing.T) {
 		t.Error("signature verification failed with loaded key")
 	}
 }
+
+func TestKeyStartupDoesNotReplaceCorruptOrUnwritableState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "corrupt.pem")
+	original := []byte("broken signing key")
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := LoadOrCreateEd25519PrivateKey(path); err == nil || key != nil {
+		t.Fatal("corrupt key was silently replaced")
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != string(original) {
+		t.Fatal("corrupt key file changed")
+	}
+	if key, err := LoadOrCreateEd25519PrivateKey(filepath.Join(path, "missing.pem")); err == nil || key != nil {
+		t.Fatal("startup accepted unsavable key")
+	}
+	if key, err := LoadOrCreateEd25519PrivateKey(dir); err == nil || key != nil {
+		t.Fatal("startup accepted directory as a key")
+	}
+}
+func TestKeyStartupCreatesOnceAndNeverOverwrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys", "key.pem")
+	first, err := LoadOrCreateEd25519PrivateKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := LoadOrCreateEd25519PrivateKey(path)
+	if err != nil || !first.Equal(second) {
+		t.Fatal("restart changed signing identity")
+	}
+	other, _ := GenerateEd25519Key()
+	if err := SaveEd25519PrivateKey(path, other); err == nil {
+		t.Fatal("save overwrote an existing signing key")
+	}
+	retained, err := LoadEd25519PrivateKey(path)
+	if err != nil || !first.Equal(retained) {
+		t.Fatal("existing key was not preserved")
+	}
+}

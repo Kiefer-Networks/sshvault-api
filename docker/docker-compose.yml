@@ -12,9 +12,11 @@ services:
         condition: service_healthy
     environment:
       LOG_FILE_PATH: /app/logs/sshvault.log
+      SERVER_ADDR: 0.0.0.0:8080
     volumes:
       - keys:/app/keys
       - logs:/app/logs
+    stop_grace_period: 35s
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -51,7 +53,7 @@ services:
       - backend
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment:
       POSTGRES_DB: sshvault
       POSTGRES_USER: sshvault

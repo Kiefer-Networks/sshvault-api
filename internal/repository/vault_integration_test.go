@@ -99,7 +99,7 @@ func TestConcurrentFirstVaultSyncReturnsOneConflict(t *testing.T) {
 	pool, uid := vaultTestPool(t)
 	repo := &firstReadBarrier{VaultRepository: repository.NewVaultRepository(pool)}
 	repo.read.Add(2)
-	svc := service.NewVaultService(repo, repository.NewTransactor(pool), 75, 10)
+	svc := service.NewVaultService(repo, repository.NewTransactor(pool), 15, 10)
 	errs := make(chan error, 2)
 	for _, blob := range []string{"first client", "second client"} {
 		go func() {
@@ -126,7 +126,7 @@ func TestConcurrentFirstVaultSyncReturnsOneConflict(t *testing.T) {
 func TestVaultUpdatePreservesHistoryAndRollsBackOnHistoryFailure(t *testing.T) {
 	pool, uid := vaultTestPool(t)
 	repo := repository.NewVaultRepository(pool)
-	svc := service.NewVaultService(repo, repository.NewTransactor(pool), 75, 10)
+	svc := service.NewVaultService(repo, repository.NewTransactor(pool), 15, 10)
 	ctx := context.Background()
 	put := func(version int, blob string) error {
 		_, err := svc.PutVault(ctx, uid, &service.PutVaultRequest{Version: version, Blob: []byte(blob), Checksum: fmt.Sprintf("%x", sha256.Sum256([]byte(blob)))})
@@ -157,5 +157,34 @@ func TestVaultUpdatePreservesHistoryAndRollsBackOnHistoryFailure(t *testing.T) {
 	}
 	if got.Version != 2 || string(got.Blob) != "second" {
 		t.Fatalf("failed history write did not roll back vault: %+v", got)
+	}
+}
+
+func TestVault15MiBWritesPreserveLargerLegacyReadsAndHistory(t *testing.T) {
+	pool, uid := vaultTestPool(t)
+	ctx := context.Background()
+	repo := repository.NewVaultRepository(pool)
+	svc := service.NewVaultService(repo, repository.NewTransactor(pool), 15, 10)
+	legacy := make([]byte, 16<<20)
+	if err := repo.Create(ctx, &model.Vault{UserID: uid, Version: 1, Blob: legacy, Checksum: "legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := svc.GetVault(ctx, uid); err != nil || len(v.Blob) != 16<<20 {
+		t.Fatal("legacy vault became unreadable")
+	}
+	if _, err := svc.PutVault(ctx, uid, &service.PutVaultRequest{Version: 2, Blob: legacy, Checksum: "not evaluated"}); err == nil {
+		t.Fatal("oversized replacement was accepted")
+	}
+	current, err := repo.GetByUserID(ctx, uid)
+	if err != nil || current.Version != 1 || len(current.Blob) != 16<<20 {
+		t.Fatal("rejected replacement changed legacy vault")
+	}
+	accepted := legacy[:15<<20]
+	if _, err := svc.PutVault(ctx, uid, &service.PutVaultRequest{Version: 2, Blob: accepted, Checksum: fmt.Sprintf("%x", sha256.Sum256(accepted))}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := svc.GetHistoryVersion(ctx, uid, 1)
+	if err != nil || len(history.Blob) != 16<<20 {
+		t.Fatal("replacing with allowed size made legacy history unreadable")
 	}
 }

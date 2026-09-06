@@ -21,7 +21,14 @@ type VaultService struct {
 	historyLimit int
 }
 
+const MaxVaultSizeBytes = 15 << 20
+
+var ErrVaultTooLarge = errors.New("decoded vault exceeds maximum size (configured limit, at most 15 MiB)")
+
 func NewVaultService(vaultRepo repository.VaultRepository, tx *repository.Transactor, maxSizeMB, historyLimit int) *VaultService {
+	if maxSizeMB > 15 {
+		maxSizeMB = 15
+	}
 	return &VaultService{
 		vaultRepo:    vaultRepo,
 		tx:           tx,
@@ -68,7 +75,7 @@ func (s *VaultService) GetVault(ctx context.Context, userID uuid.UUID) (*VaultRe
 
 func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutVaultRequest) (*VaultResponse, error) {
 	if len(req.Blob) > s.maxSizeBytes {
-		return nil, fmt.Errorf("blob exceeds maximum size of %d MB", s.maxSizeBytes/(1024*1024))
+		return nil, ErrVaultTooLarge
 	}
 
 	// Verify checksum

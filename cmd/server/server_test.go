@@ -27,7 +27,7 @@ func TestServeHTTPDrainsRequestsBeforeCleanupAndWaitsForCleanup(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		result <- serveHTTP(ctx, srv, listener, func() {
+		result <- serveHTTP(ctx, srv, listener, func(context.Context) error {
 			select {
 			case <-handlerDone:
 			default:
@@ -35,6 +35,7 @@ func TestServeHTTPDrainsRequestsBeforeCleanupAndWaitsForCleanup(t *testing.T) {
 			}
 			close(cleaning)
 			<-cleaned
+			return nil
 		})
 	}()
 	response := make(chan error, 1)
@@ -77,51 +78,55 @@ func TestServeHTTPDrainsRequestsBeforeCleanupAndWaitsForCleanup(t *testing.T) {
 	}
 }
 
-func TestForcedShutdownWaitsForCanceledHandler(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+func TestShutdownBudgetIncludesStuckHandlersAndCleanup(t *testing.T) {
+	for _, stuckHandler := range []bool{true, false} {
+		t.Run(map[bool]string{true: "handler", false: "cleanup"}[stuckHandler], func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			entered, release := make(chan struct{}), make(chan struct{})
+			defer close(release)
+			srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if stuckHandler {
+					close(entered)
+					<-release
+				}
+			})}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				result <- serveHTTPWithTimeout(ctx, srv, listener, func(context.Context) error {
+					if !stuckHandler {
+						close(entered)
+						<-release
+					}
+					return nil
+				}, 60*time.Millisecond)
+			}()
+			if stuckHandler {
+				go func() {
+					resp, err := http.Get("http://" + listener.Addr().String())
+					if err == nil {
+						resp.Body.Close()
+					}
+				}()
+				<-entered
+			}
+			cancel()
+			if !stuckHandler {
+				<-entered
+			}
+			select {
+			case err := <-result:
+				if err == nil {
+					t.Error("deadline exhaustion was not reported")
+				}
+			case <-time.After(250 * time.Millisecond):
+				t.Error("shutdown exceeded the one total budget")
+			}
+		})
 	}
-	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	cleaned := make(chan struct{})
-	srv := &http.Server{Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(entered)
-		<-r.Context().Done()
-		close(canceled)
-		<-release
-	})}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	result := make(chan error, 1)
-	go func() {
-		result <- serveHTTPWithTimeout(ctx, srv, listener, func() { close(cleaned) }, time.Millisecond)
-	}()
-	go func() {
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get("http://" + listener.Addr().String())
-		if err == nil {
-			_ = resp.Body.Close()
-		}
-	}()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("request did not start")
-	}
-	cancel()
-	select {
-	case <-canceled:
-	case <-time.After(5 * time.Second):
-		t.Fatal("connection not canceled")
-	}
-	select {
-	case <-cleaned:
-		t.Error("cleanup ran while canceled handler was active")
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(release)
-	if err := <-result; err == nil {
-		t.Fatal("forced shutdown must report its timeout")
-	}
-	<-cleaned
 }

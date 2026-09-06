@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -86,7 +87,6 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to database")
 	}
-	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
 		log.Fatal().Err(err).Msg("failed to ping database")
@@ -98,17 +98,10 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to run migrations")
 	}
 
-	// Ed25519 key
-	privKey, err := crypto.LoadEd25519PrivateKey(cfg.JWT.PrivateKeyPath)
+	// Signing identity is generated only for a missing file; every other failure is fatal.
+	privKey, err := crypto.LoadOrCreateEd25519PrivateKey(cfg.JWT.PrivateKeyPath)
 	if err != nil {
-		log.Warn().Err(err).Msg("failed to load JWT key, generating new one")
-		privKey, err = crypto.GenerateEd25519Key()
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to generate JWT key")
-		}
-		if err := crypto.SaveEd25519PrivateKey(cfg.JWT.PrivateKeyPath, privKey); err != nil {
-			log.Warn().Err(err).Msg("failed to save JWT key")
-		}
+		log.Fatal().Err(err).Msg("failed to load or persist JWT signing key")
 	}
 
 	// JWT manager
@@ -125,7 +118,7 @@ func main() {
 	// Mailer
 	var mailer mail.Mailer
 	if cfg.SMTP.Host != "" {
-		mailer = mail.NewSMTPMailer(cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.User, cfg.SMTP.Pass, cfg.SMTP.From)
+		mailer = mail.NewSMTPMailerWithTimeouts(cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.User, cfg.SMTP.Pass, cfg.SMTP.From, mail.Timeouts{Connect: cfg.SMTP.ConnectTimeout, Command: cfg.SMTP.CommandTimeout, Overall: cfg.SMTP.DeliveryTimeout})
 	} else {
 		mailer = mail.NewNoopMailer()
 	}
@@ -360,42 +353,59 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           r,
-		ReadTimeout:       120 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      180 * time.Second,
-		IdleTimeout:       30 * time.Second,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
 	shutdownCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
-	cleanup := func() {
-		mailStopCtx, mailStopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := mailService.Stop(mailStopCtx); err != nil {
-			log.Warn().Msg("mail delivery stopped at shutdown deadline")
-		}
-		mailStopCancel()
-		// Stop background goroutines and wait for them to finish
+	cleanup := func(stopCtx context.Context) error {
 		bgCancel()
-		bgWg.Wait()
 		rateLimiter.Stop()
 		authRateLimiter.Stop()
-
-		// Flush audit logs
 		auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActShutdown})
-		auditLogger.Stop()
-
+		err := runCleanup(stopCtx,
+			func(ctx context.Context) error {
+				err := mailService.Stop(ctx)
+				if n := mailService.Unconfirmed(); n > 0 {
+					log.Warn().Int64("unconfirmed_messages", n).Msg("mail messages not confirmed delivered at shutdown")
+				}
+				if err != nil {
+					log.Warn().Msg("mail delivery stopped at shutdown deadline")
+					return err
+				}
+				return nil
+			},
+			func(ctx context.Context) error {
+				n, err := auditLogger.Stop(ctx)
+				if n > 0 {
+					log.Error().Int64("unconfirmed_entries", n).Msg("audit entries not confirmed written at shutdown")
+				}
+				return err
+			},
+			func(context.Context) error { bgWg.Wait(); return nil },
+			rateLimiter.Wait, authRateLimiter.Wait,
+		)
+		// Pool.Close waits for acquired connections. Give it only the remaining
+		// process budget, even when an uncooperative request still owns one.
+		poolErr := runCleanup(stopCtx, func(context.Context) error { pool.Close(); return nil })
+		return errors.Join(err, poolErr)
 	}
+
 	listener, err := net.Listen("tcp", cfg.Server.Addr)
 	if err != nil {
-		cleanup()
+		stopCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+		_ = cleanup(stopCtx)
+		cancel()
 		log.Fatal().Err(err).Msg("failed to listen")
 	}
 
 	auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActStartup, Details: map[string]any{"addr": cfg.Server.Addr}})
 	log.Info().Str("addr", cfg.Server.Addr).Msg("server listening")
-	if err := serveHTTP(shutdownCtx, srv, listener, cleanup); err != nil {
-		pool.Close()
+	if err := serveHTTPWithTimeout(shutdownCtx, srv, listener, cleanup, cfg.Server.ShutdownTimeout); err != nil {
 		log.Fatal().Err(err).Msg("server stopped with error")
 	}
 

@@ -41,18 +41,7 @@ func (m *mockRepo) getEntries() []*Entry {
 // Uses a real Logger but with an injected mock for the insert path.
 func newTestLogger(bufSize int) (*Logger, *mockRepo) {
 	mock := &mockRepo{}
-	l := &Logger{
-		repo: nil, // won't be used directly
-		ch:   make(chan *Entry, bufSize),
-		done: make(chan struct{}),
-	}
-	// Override the run goroutine to use mock
-	go func() {
-		defer close(l.done)
-		for entry := range l.ch {
-			_ = mock.Insert(context.Background(), entry)
-		}
-	}()
+	l := NewLogger(mock, bufSize)
 	return l, mock
 }
 
@@ -62,7 +51,7 @@ func TestLoggerBuffersAndSends(t *testing.T) {
 	l.Log(&Entry{Category: CatAuth, Action: ActLogin})
 	l.Log(&Entry{Category: CatVault, Action: ActSyncPush})
 
-	l.Stop()
+	l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 2 {
@@ -85,7 +74,7 @@ func TestLoggerBufferFull(t *testing.T) {
 		l.Log(&Entry{Category: CatAuth, Action: ActLogin})
 	}
 
-	l.Stop()
+	l.Stop(context.Background())
 
 	// We should have received some but likely not all 100
 	entries := mock.getEntries()
@@ -103,7 +92,7 @@ func TestLoggerStopDrains(t *testing.T) {
 		l.Log(&Entry{Category: CatSystem, Action: ActStartup})
 	}
 
-	l.Stop()
+	l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 50 {
@@ -117,9 +106,9 @@ func TestLoggerStopIdempotent(t *testing.T) {
 	l.Log(&Entry{Category: CatSystem, Action: ActStartup})
 
 	// Multiple Stop calls should not panic
-	l.Stop()
-	l.Stop()
-	l.Stop()
+	l.Stop(context.Background())
+	l.Stop(context.Background())
+	l.Stop(context.Background())
 }
 
 func TestLogSetsTimestamp(t *testing.T) {
@@ -127,7 +116,7 @@ func TestLogSetsTimestamp(t *testing.T) {
 
 	before := time.Now()
 	l.Log(&Entry{Category: CatAuth, Action: ActLogin})
-	l.Stop()
+	l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 1 {
@@ -156,7 +145,7 @@ func TestEntryBuilderSetsAllFields(t *testing.T) {
 		Duration(dur).
 		Send()
 
-	l.Stop()
+	l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 1 {
@@ -211,7 +200,7 @@ func TestLogFromRequestExtractsContext(t *testing.T) {
 	r = r.WithContext(ctx)
 
 	l.LogFromRequest(r, CatVault, ActSyncPull).Send()
-	l.Stop()
+	l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 1 {

@@ -201,20 +201,20 @@ func TestPutVaultSizeLimit(t *testing.T) {
 	}
 }
 
-func TestVault75MiBBoundary(t *testing.T) {
+func TestVault15MiBBoundary(t *testing.T) {
 	repo := newMockVaultRepo()
-	svc := NewVaultService(repo, nil, 75, 10)
-	blob := make([]byte, 75*1024*1024+1)
-	accepted := blob[:75*1024*1024]
+	svc := NewVaultService(repo, nil, 15, 10)
+	blob := make([]byte, 15*1024*1024+1)
+	accepted := blob[:15*1024*1024]
 	if _, err := svc.PutVault(context.Background(), uuid.New(), &PutVaultRequest{
 		Version: 1, Blob: accepted, Checksum: blobChecksum(accepted),
 	}); err != nil {
-		t.Fatalf("75 MiB vault rejected: %v", err)
+		t.Fatalf("15 MiB vault rejected: %v", err)
 	}
 	if _, err := svc.PutVault(context.Background(), uuid.New(), &PutVaultRequest{
 		Version: 1, Blob: blob, Checksum: "not evaluated for oversized data",
 	}); err == nil {
-		t.Fatal("vault exceeding 75 MiB accepted")
+		t.Fatal("vault exceeding 15 MiB accepted")
 	}
 }
 

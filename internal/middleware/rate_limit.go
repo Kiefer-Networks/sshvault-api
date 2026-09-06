@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net"
@@ -19,6 +20,8 @@ type RateLimiter struct {
 	rps      rate.Limit
 	burst    int
 	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 type visitor struct {
@@ -32,6 +35,7 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 		rps:      rate.Limit(rps),
 		burst:    burst,
 		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 	go rl.cleanup()
 	return rl
@@ -39,7 +43,7 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 
 // Stop signals the background cleanup goroutine to exit.
 func (rl *RateLimiter) Stop() {
-	close(rl.stop)
+	rl.stopOnce.Do(func() { close(rl.stop) })
 }
 
 func (rl *RateLimiter) getVisitor(key string) (*rate.Limiter, bool) {
@@ -72,6 +76,7 @@ func (rl *RateLimiter) getVisitor(key string) (*rate.Limiter, bool) {
 }
 
 func (rl *RateLimiter) cleanup() {
+	defer close(rl.done)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -134,4 +139,14 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 // StrictLimit creates a stricter rate limiter for auth endpoints (5 req/min).
 func StrictAuthLimit() *RateLimiter {
 	return NewRateLimiter(5.0/60.0, 5)
+}
+
+func (rl *RateLimiter) Wait(ctx context.Context) error {
+	rl.Stop()
+	select {
+	case <-rl.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

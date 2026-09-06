@@ -42,6 +42,9 @@ func TestMailDispatcherBoundedQueueAndStop(t *testing.T) {
 	if err := dispatcher.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("stop deadline: %v", err)
 	}
+	if dispatcher.Unconfirmed() != 2 {
+		t.Errorf("lost delivery count=%d", dispatcher.Unconfirmed())
+	}
 	select {
 	case <-dispatcher.done:
 	case <-time.After(time.Second):

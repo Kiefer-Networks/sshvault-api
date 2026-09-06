@@ -8,6 +8,7 @@ import (
 
 func TestResponsePaddingTo1KB(t *testing.T) {
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`)) // 15 bytes
 	}))
@@ -33,6 +34,7 @@ func TestResponsePaddingExact1KB(t *testing.T) {
 	}
 
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 	}))
@@ -54,6 +56,7 @@ func TestResponsePaddingMultiKB(t *testing.T) {
 	}
 
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 	}))
@@ -70,6 +73,7 @@ func TestResponsePaddingMultiKB(t *testing.T) {
 
 func TestResponsePaddingEmpty(t *testing.T) {
 	handler := ResponsePadding(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 

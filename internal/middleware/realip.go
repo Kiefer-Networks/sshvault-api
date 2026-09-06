@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -21,8 +22,17 @@ func TrustedRealIP(trustedCIDRs string) func(http.Handler) http.Handler {
 
 			ip := net.ParseIP(remoteIP)
 			if ip != nil && isTrusted(ip, nets) {
-				if realIP := extractRealIP(r); realIP != "" {
-					r.RemoteAddr = realIP
+				forwarded, err := forwardedChain(r)
+				if err != nil {
+					respondJSONError(w, http.StatusBadRequest, "invalid forwarding address")
+					return
+				}
+				current := ip
+				for i := len(forwarded) - 1; i >= 0 && isTrusted(current, nets); i-- {
+					current = forwarded[i]
+				}
+				if len(forwarded) > 0 {
+					r.RemoteAddr = current.String()
 				}
 			}
 
@@ -61,20 +71,24 @@ func isTrusted(ip net.IP, nets []*net.IPNet) bool {
 	return false
 }
 
-// extractRealIP picks the rightmost non-private IP from X-Forwarded-For,
-// falling back to X-Real-Ip.
-func extractRealIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		for i := len(parts) - 1; i >= 0; i-- {
-			ip := strings.TrimSpace(parts[i])
-			if ip != "" {
-				return ip
-			}
+// Validate the complete presented chain, then trust only configured hops.
+func forwardedChain(r *http.Request) ([]net.IP, error) {
+	values := r.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		values = r.Header.Values("X-Real-Ip")
+		if len(values) > 1 {
+			return nil, fmt.Errorf("multiple real IP values")
 		}
 	}
-	if xri := r.Header.Get("X-Real-Ip"); xri != "" {
-		return strings.TrimSpace(xri)
+	var result []net.IP
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			ip := net.ParseIP(strings.TrimSpace(part))
+			if ip == nil {
+				return nil, fmt.Errorf("invalid IP")
+			}
+			result = append(result, ip)
+		}
 	}
-	return ""
+	return result, nil
 }

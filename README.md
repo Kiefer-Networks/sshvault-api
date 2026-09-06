@@ -250,7 +250,7 @@ api.example.com {
     # --- Request Size Limit ---
     # Limits the maximum request body size to prevent abuse:
     request_body {
-        max_size 106000000
+        max_size 21037056
     }
 
     # --- Route Filtering ---
@@ -343,7 +343,7 @@ server {
 
     # --- Request Size Limit ---
     # Limits the maximum request body size to prevent abuse:
-    client_max_body_size 101M;
+    client_max_body_size 21037056;
 
     # --- Reverse Proxy ---
     location / {
@@ -426,8 +426,8 @@ API_BASE_URL=https://api.example.com
     Header always unset X-Powered-By
 
     # --- Request Size Limit ---
-    # Limits the maximum request body size to allow a 75 MiB vault plus Base64/JSON overhead:
-    LimitRequestBody 105906176
+    # Limits the maximum request body size to allow a 15 MiB vault plus Base64/JSON overhead:
+    LimitRequestBody 21037056
 
     # --- Reverse Proxy ---
     # Required modules: mod_proxy, mod_proxy_http, mod_headers
@@ -593,7 +593,15 @@ The verification email links to `GET /v1/auth/verify-email?token=...`, a non-mut
 
 Verification, recovery, and email-change delivery each have a database-enforced 60-second cooldown per normalized recipient and purpose, shared across clients, IPs, and server processes. Only a recipient digest is stored in the budget table. At most one unused token exists per account and purpose. A throttled signup keeps the same opaque response, sends no mail, and preserves the existing viable link. Only an admitted resend after the cooldown replaces it.
 
-SMTP runs through a bounded queue (128 messages, two workers), so SMTP latency never blocks registration responses. Queue saturation and delivery failure preserve registration's opaque result; retry after the cooldown. Shutdown drains mail for at most five seconds and then cancels delivery; SMTP connections observe cancellation and have bounded connection/overall deadlines. Configured SMTP requires certificate-verified TLS 1.2 or newer: port 465 uses implicit TLS, and other ports require STARTTLS. No credentials or message content are sent before TLS succeeds. If SMTP credentials are configured, missing or rejected AUTH fails delivery; plaintext fallback is never used. Trusted certificates must match `SMTP_HOST`.
+SMTP runs through a bounded queue (128 messages, two workers), so SMTP latency never blocks registration responses. Queue saturation and delivery failure preserve registration's opaque result; retry after the cooldown. Mail draining shares the single process shutdown deadline; SMTP observes cancellation and separate connection, command-I/O, and overall deadlines. Configured SMTP requires certificate-verified TLS 1.2 or newer: port 465 uses implicit TLS, and other ports require STARTTLS. No credentials or message content are sent before TLS succeeds. If SMTP credentials are configured, missing or rejected AUTH fails delivery; plaintext fallback is never used. Trusted certificates must match `SMTP_HOST`.
+
+HTTP JSON errors and other JSON responses up to 64 KiB are padded to 1 KiB boundaries and remain uncompressed, including early `400`, `413`, and `429` rejections. CORS and security headers wrap these rejection paths. Opaque vault/history blobs stream as JSON with optional gzip; they are not padded. Larger general responses also bypass buffering after 64 KiB. Existing vaults above 15 MiB remain readable, exportable, and available in history; only new/replacement writes (including client imports through the write endpoint) use the 15 MiB ceiling. Requests must contain exactly one JSON value. Configure proxy request limits to **21,037,056 bytes** for the default Base64 JSON envelope; a decoded blob of 15,728,641 bytes returns `413` even when its wire body fits.
+
+Trusted proxy processing validates every forwarded IP and walks the chain from right to left through explicitly trusted hops. The first untrusted hop is the client; untrusted direct callers cannot supply forwarding addresses. Malformed forwarding from a trusted proxy returns `400`. `TRUSTED_PROXIES` accepts IPs/CIDRs; an empty value trusts no proxy. Public URLs and CORS origins, ports, limits, rates, durations, and timeout ordering are validated before runtime resources start.
+
+Process shutdown uses one **30-second total budget** by default. HTTP receives at most two thirds for graceful drain, then remaining connections are closed. Background cancellation, mail/audit drain, rate-limiter joins, and database-pool closure share the remaining deadline. Stuck handlers or repositories cannot hold process return indefinitely. Audit and mail shutdown report entries/messages whose successful delivery is unconfirmed, including queued work abandoned at the deadline. A non-cooperative operation may finish later; shutdown never claims that such an in-flight entry was persisted.
+
+JWT signing keys are generated only when the configured path does not exist, published without overwriting another key, and synced before use. Corrupt, unreadable, insecure Unix permissions, and persistence failures abort startup. Existing keys are never silently replaced. On Windows, provision the key directory with an appropriate owner-only ACL; Unix mode bits do not express Windows ACLs.
 
 Migration `023` explicitly marks pre-upgrade accounts as `verification_grandfathered`, including those whose `verified` value is false. Their existing sessions, login, and synchronization remain authorized. New accounts default to requiring verification; the migration does not rewrite actual mailbox verification status. Downgrade is refused while any new unverified account would lose that distinction; a later re-upgrade cannot silently grandfather it. Migration `024` removes the obsolete requester-password column from databases that applied an earlier draft, randomizes pending-account password placeholders, and preserves viable mailbox tokens. Its down migration restores only an empty compatibility column; discarded requester hashes are never restored. Deploy this code with all migrations applied.
 
@@ -617,6 +625,12 @@ Key environment variables:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | **Server** | | | |
+| `SERVER_READ_HEADER_TIMEOUT` | No | `2s` | Maximum header read time |
+| `SERVER_READ_TIMEOUT` | No | `120s` | Maximum request read time |
+| `SERVER_REQUEST_TIMEOUT` | No | `180s` | Context deadline for handler/database work |
+| `SERVER_WRITE_TIMEOUT` | No | `180s` | Maximum response write time |
+| `SERVER_IDLE_TIMEOUT` | No | `30s` | Idle keep-alive timeout |
+| `SERVER_SHUTDOWN_TIMEOUT` | No | `30s` | Single total shutdown budget |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `POSTGRES_PASSWORD` | Yes | — | PostgreSQL password (Docker Compose) |
 | `HOST_PORT` | No | `127.0.0.1:8080` | Host-side port mapping for Docker Compose |
@@ -636,9 +650,12 @@ Key environment variables:
 | `SMTP_PORT` | No | `587` | `465` uses implicit TLS; all other ports require STARTTLS |
 | `SMTP_USER` | No | — | SMTP username |
 | `SMTP_PASS` | No | — | SMTP password |
+| `SMTP_CONNECT_TIMEOUT` | No | `10s` | Connection deadline |
+| `SMTP_COMMAND_TIMEOUT` | No | `10s` | Deadline for each SMTP read/write operation |
+| `SMTP_DELIVERY_TIMEOUT` | No | `30s` | Overall delivery deadline including connection |
 | `SMTP_FROM` | No | `noreply@example.com` | Sender address |
 | **Vault** | | | |
-| `VAULT_MAX_SIZE_MB` | No | `75` | Maximum decoded vault blob size (MiB) |
+| `VAULT_MAX_SIZE_MB` | No | `15` | Decoded write limit in MiB; may be reduced, never raised above 15 |
 | `VAULT_HISTORY_LIMIT` | No | `10` | Maximum stored vault versions |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_RPS` | No | `10` | Requests per second (global) |
@@ -680,7 +697,7 @@ For self-hosted instances:
 - Binds to `127.0.0.1:8080` by default (not reachable from outside)
 - Trusted proxy validation — `X-Forwarded-For` only accepted from configured CIDRs
 - Aggressive timeouts: 2s header read, 120s body read, 180s write, 30s idle
-- Vault uploads accept 75 MiB of decoded data (100 MiB Base64 plus 64 KiB JSON envelope); other request bodies remain limited to 10 MiB, headers to 1 MiB
+- Vault uploads accept exactly 15 MiB (15,728,640 bytes) of decoded data at the default limit (20 MiB Base64 plus 64 KiB JSON envelope; 21,037,056 bytes on the wire); other request bodies remain limited to 10 MiB, headers to 1 MiB
 - Docker containers: `read_only`, `no-new-privileges`, non-root user
 - PostgreSQL port not exposed to host
 

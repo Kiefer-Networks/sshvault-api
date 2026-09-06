@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -183,5 +184,14 @@ func TestStrictAuthLimit(t *testing.T) {
 
 	if rl.burst != 5 {
 		t.Errorf("burst = %d, want 5", rl.burst)
+	}
+}
+
+func TestRateLimiterStopIsIdempotentAndJoinsWorker(t *testing.T) {
+	r := NewRateLimiter(1, 1)
+	r.Stop()
+	r.Stop()
+	if err := r.Wait(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

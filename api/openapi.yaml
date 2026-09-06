@@ -415,7 +415,7 @@ paths:
     put:
       tags: [Vault]
       summary: Upload vault blob (optimistic locking)
-      description: The decoded vault blob may contain up to 75 MiB by default (configurable via VAULT_MAX_SIZE_MB). Base64 encoding adds overhead; the HTTP limit includes this plus 64 KiB for the JSON envelope.
+      description: The decoded write limit is exactly 15 MiB (15728640 bytes) by default; VAULT_MAX_SIZE_MB may lower it but cannot raise it. Base64 JSON is limited to 21037056 wire bytes (20 MiB plus 64 KiB envelope). A decoded blob above the configured limit returns 413 before persistence, including replacement/import uploads. Existing larger vaults and history remain readable/exportable. Vault blobs stream with optional gzip and bypass padding; bounded JSON responses up to 64 KiB use uncompressed 1 KiB padding.
       operationId: putVault
       security:
         - bearerAuth: []
@@ -434,6 +434,7 @@ paths:
                 blob:
                   type: string
                   format: byte
+                  maxLength: 20971520
                 checksum:
                   type: string
                   description: SHA-256 of blob

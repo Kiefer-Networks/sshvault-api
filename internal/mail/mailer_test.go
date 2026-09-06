@@ -87,3 +87,33 @@ func TestSMTPDeliveryCancellationClosesStalledConnection(t *testing.T) {
 	}
 	<-finished
 }
+
+func TestSMTPCommandTimeoutBoundsStalledGreeting(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buffer := make([]byte, 1)
+		_, _ = conn.Read(buffer)
+	}()
+	m := NewSMTPMailerWithTimeouts("127.0.0.1", listener.Addr().(*net.TCPAddr).Port, "", "", "sender@example.com", Timeouts{Connect: time.Second, Command: 30 * time.Millisecond, Overall: time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err = m.Send(ctx, "recipient@example.com", "subject", "secret"); err == nil {
+		t.Fatal("stalled command succeeded")
+	}
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatal("SMTP command used the longer overall deadline")
+	}
+	<-finished
+}

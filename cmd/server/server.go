@@ -9,58 +9,70 @@ import (
 	"time"
 )
 
-// serveHTTP owns the server lifecycle. Cleanup runs only after HTTP shutdown,
-// and completes before the caller may close database connections or exit.
-func serveHTTP(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func()) error {
+// serveHTTP uses one total deadline across graceful drain, forced close, and
+// cleanup. Misbehaving handlers or cleanup cannot prevent process return.
+func serveHTTP(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func(context.Context) error) error {
 	return serveHTTPWithTimeout(ctx, srv, listener, cleanup, 30*time.Second)
 }
-
-func serveHTTPWithTimeout(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func(), timeout time.Duration) error {
-	defer cleanup()
-	// Close cancels connections but does not wait for handlers to return.
-	// Gate additions before waiting so late-dispatched requests cannot race cleanup.
-	var mu sync.Mutex
-	var active sync.WaitGroup
-	closing := false
-	handler := srv.Handler
-	if handler == nil {
-		handler = http.DefaultServeMux
-	}
-	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		if closing {
-			mu.Unlock()
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		active.Add(1)
-		mu.Unlock()
-		defer active.Done()
-		handler.ServeHTTP(w, r)
-	})
-	defer func() {
-		mu.Lock()
-		closing = true
-		mu.Unlock()
-		active.Wait()
-	}()
+func serveHTTPWithTimeout(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func(context.Context) error, timeout time.Duration) error {
 	result := make(chan error, 1)
 	go func() { result <- srv.Serve(listener) }()
+	var serveErr error
 	select {
-	case err := <-result:
-		_ = srv.Close()
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
+	case serveErr = <-result:
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		err := srv.Shutdown(shutdownCtx)
-		if err != nil {
-			_ = srv.Close()
+	}
+	budget, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	grace, graceCancel := context.WithTimeout(budget, timeout-timeout/3)
+	shutdownErr := srv.Shutdown(grace)
+	graceCancel()
+	if shutdownErr != nil {
+		_ = srv.Close()
+	}
+	// Serve returns after the listener closes, independent of remaining handlers.
+	if serveErr == nil {
+		select {
+		case serveErr = <-result:
+		case <-budget.Done():
 		}
-		<-result
-		return err
+	}
+	cleanupResult := make(chan error, 1)
+	go func() { cleanupResult <- cleanup(budget) }()
+	var cleanupErr error
+	select {
+	case cleanupErr = <-cleanupResult:
+	case <-budget.Done():
+		cleanupErr = budget.Err()
+	}
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
+	}
+	return errors.Join(serveErr, shutdownErr, cleanupErr)
+}
+
+// runCleanup starts a fixed set of shutdown operations together under the same
+// deadline, including operations whose underlying API has no context support.
+func runCleanup(ctx context.Context, operations ...func(context.Context) error) error {
+	results := make(chan error, len(operations))
+	var wg sync.WaitGroup
+	for _, operation := range operations {
+		wg.Add(1)
+		go func() { defer wg.Done(); results <- operation(ctx) }()
+	}
+	go func() { wg.Wait(); close(results) }()
+	var errs []error
+	for {
+		select {
+		case err, ok := <-results:
+			if !ok {
+				return errors.Join(errs...)
+			}
+			if err != nil {
+				errs = append(errs, err)
+			}
+		case <-ctx.Done():
+			return errors.Join(append(errs, ctx.Err())...)
+		}
 	}
 }

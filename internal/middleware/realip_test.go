@@ -142,18 +142,15 @@ func TestTrustedRealIP_MultipleXForwardedForTakesRightmost(t *testing.T) {
 }
 
 func TestTrustedRealIP_XForwardedForWithTrailingComma(t *testing.T) {
-	handler := TrustedRealIP("10.0.0.0/8")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.RemoteAddr != "9.8.7.6" {
-			t.Errorf("RemoteAddr = %q, want %q", r.RemoteAddr, "9.8.7.6")
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-
+	h := TrustedRealIP("10.0.0.0/8")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("malformed chain reached handler") }))
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "10.0.0.1:8080"
 	req.Header.Set("X-Forwarded-For", "9.8.7.6, ")
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
+	h.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Errorf("status=%d", w.Code)
+	}
 }
 
 func TestTrustedRealIP_RemoteAddrWithoutPort(t *testing.T) {
@@ -300,62 +297,74 @@ func TestIsTrusted_EmptyNets(t *testing.T) {
 	}
 }
 
-func TestExtractRealIP_XForwardedFor(t *testing.T) {
+func TestForwardedChain_XForwardedFor(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
 
-	got := extractRealIP(req)
+	got := lastForwardedIP(t, req)
 	if got != "5.6.7.8" {
 		t.Errorf("extractRealIP = %q, want %q", got, "5.6.7.8")
 	}
 }
 
-func TestExtractRealIP_XForwardedForSingle(t *testing.T) {
+func TestForwardedChain_XForwardedForSingle(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Forwarded-For", "1.2.3.4")
 
-	got := extractRealIP(req)
+	got := lastForwardedIP(t, req)
 	if got != "1.2.3.4" {
 		t.Errorf("extractRealIP = %q, want %q", got, "1.2.3.4")
 	}
 }
 
-func TestExtractRealIP_FallbackToXRealIP(t *testing.T) {
+func TestForwardedChain_FallbackToXRealIP(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Real-Ip", "9.9.9.9")
 
-	got := extractRealIP(req)
+	got := lastForwardedIP(t, req)
 	if got != "9.9.9.9" {
 		t.Errorf("extractRealIP = %q, want %q", got, "9.9.9.9")
 	}
 }
 
-func TestExtractRealIP_XForwardedForTakesPrecedence(t *testing.T) {
+func TestForwardedChain_XForwardedForTakesPrecedence(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Forwarded-For", "1.1.1.1")
 	req.Header.Set("X-Real-Ip", "2.2.2.2")
 
-	got := extractRealIP(req)
+	got := lastForwardedIP(t, req)
 	if got != "1.1.1.1" {
 		t.Errorf("extractRealIP = %q, want %q (X-Forwarded-For should take precedence)", got, "1.1.1.1")
 	}
 }
 
-func TestExtractRealIP_NoHeaders(t *testing.T) {
+func TestForwardedChain_NoHeaders(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 
-	got := extractRealIP(req)
+	got := lastForwardedIP(t, req)
 	if got != "" {
 		t.Errorf("extractRealIP with no headers = %q, want empty", got)
 	}
 }
 
-func TestExtractRealIP_XRealIPWithWhitespace(t *testing.T) {
+func TestForwardedChain_XRealIPWithWhitespace(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Real-Ip", "  3.3.3.3  ")
 
-	got := extractRealIP(req)
+	got := lastForwardedIP(t, req)
 	if got != "3.3.3.3" {
 		t.Errorf("extractRealIP = %q, want %q", got, "3.3.3.3")
 	}
+}
+
+func lastForwardedIP(t *testing.T, r *http.Request) string {
+	t.Helper()
+	chain, err := forwardedChain(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain) == 0 {
+		return ""
+	}
+	return chain[len(chain)-1].String()
 }

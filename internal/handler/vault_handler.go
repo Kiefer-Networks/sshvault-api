@@ -43,7 +43,7 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 	h.audit.LogFromRequest(r, audit.CatVault, audit.ActSyncPull).
 		Resource("vault", userID.String()).
 		Send()
-	respondJSON(w, http.StatusOK, resp)
+	respondVault(w, r, resp)
 }
 
 func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +80,10 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.vaultService.PutVault(r.Context(), userID, &req)
 	if err != nil {
+		if errors.Is(err, service.ErrVaultTooLarge) {
+			respondError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		if conflict, ok := err.(*service.ConflictError); ok {
 			respondJSON(w, http.StatusConflict, conflict)
 			return
@@ -135,7 +139,7 @@ func (h *VaultHandler) GetHistoryVersion(w http.ResponseWriter, r *http.Request)
 	h.audit.LogFromRequest(r, audit.CatVault, audit.ActHistoryView).
 		Detail("version", version).
 		Send()
-	respondJSON(w, http.StatusOK, resp)
+	respondVault(w, r, resp)
 }
 
 func (h *VaultHandler) trackDevice(r *http.Request, userID uuid.UUID) {

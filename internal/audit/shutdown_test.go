@@ -1,13 +1,14 @@
 package audit
 
 import (
+	"context"
 	"sync"
 	"testing"
 )
 
 func TestLogAfterStopDoesNotPanic(t *testing.T) {
 	l := NewNopLogger()
-	l.Stop()
+	l.Stop(context.Background())
 	l.Log(&Entry{Category: CatSystem, Action: ActShutdown})
 }
 
@@ -23,6 +24,6 @@ func TestConcurrentLogAndStop(t *testing.T) {
 			}
 		}()
 	}
-	l.Stop()
+	l.Stop(context.Background())
 	wg.Wait()
 }
