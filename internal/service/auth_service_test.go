@@ -250,6 +250,21 @@ func TestRegisterInvalidEmail(t *testing.T) {
 	}
 }
 
+func TestValidateEmailRequiresPlainMailbox(t *testing.T) {
+	for _, email := range []string{
+		"Name <user@example.com>",
+		"user@example.com (comment)",
+		strings.Repeat("a", 243) + "@example.com",
+	} {
+		if err := ValidateEmail(email); err == nil {
+			t.Errorf("ValidateEmail(%q) accepted a non-plain or oversized mailbox", email)
+		}
+	}
+	if err := ValidateEmail("user@example.com"); err != nil {
+		t.Fatalf("plain mailbox rejected: %v", err)
+	}
+}
+
 func registerVerified(t *testing.T, svc *AuthService, ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
 	t.Helper()
 	hash, err := auth.HashPassword(req.Password)

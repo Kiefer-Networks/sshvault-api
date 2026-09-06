@@ -162,7 +162,8 @@ func NormalizeEmail(email string) string {
 
 // ValidateEmail checks if the email address has a valid format (RFC 5322).
 func ValidateEmail(email string) error {
-	if _, err := mail.ParseAddress(email); err != nil {
+	address, err := mail.ParseAddress(email)
+	if err != nil || len(email) > 254 || address.Address != email {
 		return fmt.Errorf("invalid email format")
 	}
 	return nil
@@ -175,7 +176,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return nil, err
 	}
 
-	_, err := auth.HashPassword(req.Password)
+	_, err := auth.HashPasswordContext(ctx, req.Password)
 	if err != nil {
 		return nil, fmt.Errorf("hashing password: %w", err)
 	}
@@ -306,14 +307,14 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 	}
 	if user == nil || (!user.Verified && !user.VerificationGrandfathered) {
 		// Perform a dummy password verify to equalize timing with real user lookups
-		_, _ = auth.VerifyPassword(req.Password, dummyArgon2Hash)
+		_, _ = auth.VerifyPasswordContext(ctx, req.Password, dummyArgon2Hash)
 		// Record failed attempt even for non-existent accounts to prevent enumeration
 
 		log.Warn().Str("email", maskEmail(req.Email)).Msg("login failed: unknown email")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	valid, err := auth.VerifyPassword(req.Password, user.Password)
+	valid, err := auth.VerifyPasswordContext(ctx, req.Password, user.Password)
 	if err != nil || !valid {
 
 		log.Warn().Str("email", maskEmail(req.Email)).Msg("login failed: wrong password")
@@ -421,7 +422,7 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken, newPassword str
 	if stored == nil || !stored.ExpiresAt.After(time.Now()) {
 		return fmt.Errorf("invalid or expired verification token")
 	}
-	passwordHash, err := auth.HashPassword(newPassword)
+	passwordHash, err := auth.HashPasswordContext(ctx, newPassword)
 	if err != nil {
 		return fmt.Errorf("hashing activation password: %w", err)
 	}
@@ -514,7 +515,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword s
 	if stored == nil || !stored.ExpiresAt.After(time.Now()) {
 		return fmt.Errorf("invalid or expired reset token")
 	}
-	passwordHash, err := auth.HashPassword(newPassword)
+	passwordHash, err := auth.HashPasswordContext(ctx, newPassword)
 	if err != nil {
 		return fmt.Errorf("hashing password: %w", err)
 	}

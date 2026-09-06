@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -19,12 +20,32 @@ const (
 	argonKeyLen      = 32
 )
 
+var argon2Slots = make(chan struct{}, 1)
+
+func acquireArgon2(ctx context.Context) (func(), error) {
+	select {
+	case argon2Slots <- struct{}{}:
+		return func() { <-argon2Slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func HashPassword(password string) (string, error) {
+	return HashPasswordContext(context.Background(), password)
+}
+
+func HashPasswordContext(ctx context.Context, password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generating salt: %w", err)
 	}
 
+	release, err := acquireArgon2(ctx)
+	if err != nil {
+		return "", fmt.Errorf("waiting for password hashing capacity: %w", err)
+	}
+	defer release()
 	hash := argon2.IDKey([]byte(password), salt, argonIterations, argonMemory, argonParallelism, argonKeyLen)
 	defer crypto.Zero(hash)
 
@@ -40,8 +61,12 @@ func HashPassword(password string) (string, error) {
 }
 
 func VerifyPassword(password, encoded string) (bool, error) {
+	return VerifyPasswordContext(context.Background(), password, encoded)
+}
+
+func VerifyPasswordContext(ctx context.Context, password, encoded string) (bool, error) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 {
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
 		return false, fmt.Errorf("invalid hash format")
 	}
 
@@ -50,14 +75,25 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	var iterations uint32
 	var parallelism uint8
 
-	_, err := fmt.Sscanf(parts[2], "v=%d", &version)
+	n, err := fmt.Sscanf(parts[2], "v=%d", &version)
 	if err != nil {
 		return false, fmt.Errorf("parsing version: %w", err)
 	}
+	if n != 1 || parts[2] != fmt.Sprintf("v=%d", version) || version != argon2.Version {
+		return false, fmt.Errorf("unsupported hash version")
+	}
 
-	_, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism)
+	n, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism)
 	if err != nil {
 		return false, fmt.Errorf("parsing params: %w", err)
+	}
+	if n != 3 || parts[3] != fmt.Sprintf("m=%d,t=%d,p=%d", memory, iterations, parallelism) {
+		return false, fmt.Errorf("invalid hash parameters")
+	}
+	validV1 := memory == 64*1024 && iterations == 3 && parallelism == 4
+	validV2 := memory == argonMemory && iterations == argonIterations && parallelism == argonParallelism
+	if !validV1 && !validV2 {
+		return false, fmt.Errorf("unsupported hash parameters")
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
@@ -69,7 +105,15 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("decoding hash: %w", err)
 	}
+	if len(salt) != argonSaltLen || len(expectedHash) != argonKeyLen {
+		return false, fmt.Errorf("invalid hash dimensions")
+	}
 
+	release, err := acquireArgon2(ctx)
+	if err != nil {
+		return false, fmt.Errorf("waiting for password verification capacity: %w", err)
+	}
+	defer release()
 	hash := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(expectedHash)))
 	defer crypto.Zero(hash)
 
