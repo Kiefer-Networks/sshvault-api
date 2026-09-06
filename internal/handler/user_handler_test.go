@@ -416,3 +416,49 @@ func TestChangePassword_ExactlyMinLength(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
+
+func (m *mockUserRepo) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.User, error) {
+	return m.GetByID(ctx, id)
+}
+func (m *mockUserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Email = email
+	u.Verified = false
+	return m.Update(ctx, u)
+}
+func (m *mockUserRepo) UpdateAvatar(ctx context.Context, id uuid.UUID, avatar string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Avatar = avatar
+	return m.Update(ctx, u)
+}
+func (m *mockUserRepo) MarkVerified(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Verified = true
+	return m.Update(ctx, u)
+}
+func (m *mockUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, expected, password string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Password = password
+	u.SessionVersion++
+	return m.Update(ctx, u)
+}
+func (m *mockUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.SessionVersion++
+	return m.Update(ctx, u)
+}

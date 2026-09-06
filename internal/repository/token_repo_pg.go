@@ -30,7 +30,7 @@ func (r *pgTokenRepo) Create(ctx context.Context, token *model.RefreshToken) err
 	}
 	token.CreatedAt = time.Now()
 
-	_, err := r.pool.Exec(ctx, query,
+	_, err := conn(ctx, r.pool).Exec(ctx, query,
 		token.ID, token.UserID, token.TokenHash, token.DeviceName,
 		token.ExpiresAt, token.CreatedAt, false)
 	if err != nil {
@@ -45,7 +45,7 @@ func (r *pgTokenRepo) GetByHash(ctx context.Context, tokenHash string) (*model.R
 		FROM refresh_tokens WHERE token_hash = $1`
 
 	var token model.RefreshToken
-	err := r.pool.QueryRow(ctx, query, tokenHash).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, tokenHash).Scan(
 		&token.ID, &token.UserID, &token.TokenHash, &token.DeviceName,
 		&token.ExpiresAt, &token.CreatedAt, &token.Revoked)
 	if err != nil {
@@ -65,7 +65,7 @@ func (r *pgTokenRepo) ConsumeRefreshToken(ctx context.Context, tokenHash string)
 		RETURNING id, user_id, token_hash, device_name, expires_at, created_at, revoked`
 
 	var token model.RefreshToken
-	err := r.pool.QueryRow(ctx, query, tokenHash).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, tokenHash).Scan(
 		&token.ID, &token.UserID, &token.TokenHash, &token.DeviceName,
 		&token.ExpiresAt, &token.CreatedAt, &token.Revoked)
 	if err != nil {
@@ -79,7 +79,7 @@ func (r *pgTokenRepo) ConsumeRefreshToken(ctx context.Context, tokenHash string)
 
 func (r *pgTokenRepo) Revoke(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE refresh_tokens SET revoked = TRUE WHERE id = $1`
-	_, err := r.pool.Exec(ctx, query, id)
+	_, err := conn(ctx, r.pool).Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("revoking refresh token: %w", err)
 	}
@@ -97,7 +97,7 @@ func (r *pgTokenRepo) RevokeAllForUser(ctx context.Context, userID uuid.UUID) er
 
 func (r *pgTokenRepo) DeleteExpired(ctx context.Context) (int64, error) {
 	query := `DELETE FROM refresh_tokens WHERE expires_at < $1 OR revoked = TRUE`
-	result, err := r.pool.Exec(ctx, query, time.Now())
+	result, err := conn(ctx, r.pool).Exec(ctx, query, time.Now())
 	if err != nil {
 		return 0, fmt.Errorf("deleting expired tokens: %w", err)
 	}

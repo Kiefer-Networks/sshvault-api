@@ -165,7 +165,7 @@ func (h *UserHandler) UpdateAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user.Avatar = req.Avatar
-	if err := h.userRepo.Update(r.Context(), user); err != nil {
+	if err := h.userRepo.UpdateAvatar(r.Context(), user.ID, user.Avatar); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to update avatar")
 		return
 	}
@@ -187,7 +187,7 @@ func (h *UserHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user.Avatar = ""
-	if err := h.userRepo.Update(r.Context(), user); err != nil {
+	if err := h.userRepo.UpdateAvatar(r.Context(), user.ID, user.Avatar); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to delete avatar")
 		return
 	}

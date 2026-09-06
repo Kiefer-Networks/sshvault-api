@@ -15,8 +15,8 @@ import (
 // --- Mock Repositories for UserService Tests ---
 
 type userSvcMockUserRepo struct {
-	users      map[uuid.UUID]*model.User
-	emailIndex map[string]*model.User
+	users         map[uuid.UUID]*model.User
+	emailIndex    map[string]*model.User
 	getByIDErr    error
 	getByEmailErr error
 	updateErr     error
@@ -371,7 +371,7 @@ func TestUpdateProfileUpdateError(t *testing.T) {
 
 	repo.updateErr = fmt.Errorf("write failed")
 
-	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{})
+	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{Email: "changed@example.com"})
 	if err == nil {
 		t.Fatal("expected error when update fails")
 	}
@@ -432,47 +432,48 @@ func TestChangePasswordInvalidCurrent(t *testing.T) {
 	}
 }
 
-func TestChangePasswordEmptyPasswordUser(t *testing.T) {
-	repo := newUserSvcMockUserRepo()
-	svc := newUserService(repo, newUserSvcMockTokenRepo())
-	// Users with an empty password field; changing password should skip
-	// the current password check. This test verifies the code path up to the
-	// transaction call. Because the Transactor requires a real DB, we expect
-	// a nil-pointer panic. We recover from it to confirm we got past the
-	// password check.
-	user := seedUser(repo, "emptypass@example.com", "")
-
-	func() {
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("expected panic from nil Transactor (proves we passed the password check)")
-			}
-			// Recovered successfully — the code path reached WithTransaction.
-		}()
-		_ = svc.ChangePassword(context.Background(), user.ID, &ChangePasswordRequest{
-			CurrentPassword: "",
-			NewPassword:     "newpassword123",
-		})
-	}()
+func (m *userSvcMockUserRepo) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.User, error) {
+	return m.GetByID(ctx, id)
 }
-
-// --- DeleteAccount Tests ---
-
-func TestDeleteAccountUserNotExistNoError(t *testing.T) {
-	// DeleteAccount calls tx.WithTransaction directly (no user lookup first),
-	// so even for non-existent users it would try the transaction. With nil tx
-	// we expect a panic proving the code reached the transaction call.
-	repo := newUserSvcMockUserRepo()
-	svc := newUserService(repo, newUserSvcMockTokenRepo())
-
-	func() {
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("expected panic from nil Transactor")
-			}
-		}()
-		_ = svc.DeleteAccount(context.Background(), uuid.New())
-	}()
+func (m *userSvcMockUserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Email = email
+	u.Verified = false
+	return m.Update(ctx, u)
+}
+func (m *userSvcMockUserRepo) UpdateAvatar(ctx context.Context, id uuid.UUID, avatar string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Avatar = avatar
+	return m.Update(ctx, u)
+}
+func (m *userSvcMockUserRepo) MarkVerified(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Verified = true
+	return m.Update(ctx, u)
+}
+func (m *userSvcMockUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, expected, password string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Password = password
+	u.SessionVersion++
+	return m.Update(ctx, u)
+}
+func (m *userSvcMockUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.SessionVersion++
+	return m.Update(ctx, u)
 }

@@ -18,6 +18,10 @@ type Querier interface {
 
 type ctxTxKey struct{}
 
+type TransactionRunner interface {
+	WithTransaction(context.Context, func(context.Context) error) error
+}
+
 // Transactor provides database transaction support across repositories.
 type Transactor struct {
 	pool *pgxpool.Pool
@@ -30,7 +34,11 @@ func NewTransactor(pool *pgxpool.Pool) *Transactor {
 
 // WithTransaction executes fn within a database transaction. If fn returns
 // an error the transaction is rolled back; otherwise it is committed.
+// Calls with an existing transaction join it; the outer caller owns commit/rollback.
 func (t *Transactor) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	if _, ok := ctx.Value(ctxTxKey{}).(pgx.Tx); ok {
+		return fn(ctx)
+	}
 	tx, err := t.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)

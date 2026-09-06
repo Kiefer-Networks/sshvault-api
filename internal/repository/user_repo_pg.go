@@ -32,7 +32,7 @@ func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
-	_, err := r.pool.Exec(ctx, query,
+	_, err := conn(ctx, r.pool).Exec(ctx, query,
 		user.ID, user.Email, user.Password, user.Verified, user.Avatar, user.CreatedAt, user.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("creating user: %w", err)
@@ -42,13 +42,13 @@ func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 
 func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version
 		FROM users WHERE id = $1 AND deleted_at IS NULL`
 
 	var user model.User
-	err := r.pool.QueryRow(ctx, query, id).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, id).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -60,13 +60,13 @@ func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, er
 
 func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version
 		FROM users WHERE email = $1 AND deleted_at IS NULL`
 
 	var user model.User
-	err := r.pool.QueryRow(ctx, query, email).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -78,13 +78,13 @@ func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User,
 
 func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version
 		FROM users WHERE email = $1 AND deleted_at IS NOT NULL`
 
 	var user model.User
-	err := r.pool.QueryRow(ctx, query, email).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -94,18 +94,63 @@ func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*mode
 	return &user, nil
 }
 
-func (r *pgUserRepo) Update(ctx context.Context, user *model.User) error {
-	query := `
-		UPDATE users SET email = $1, password = $2, verified = $3, avatar = $4, updated_at = $5
-		WHERE id = $6 AND deleted_at IS NULL`
+// GetByIDForUpdate serializes session issuance with password changes and revocation.
+// Callers must hold a transaction until all session changes are complete.
+func (r *pgUserRepo) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.User, error) {
+	var user model.User
+	const query = `SELECT id, email, password, verified, avatar, created_at,
+  updated_at, deleted_at, session_version
+  FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`
+	err := conn(ctx, r.pool).QueryRow(ctx, query, id).Scan(
+		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("locking user: %w", err)
+	}
+	return &user, nil
+}
 
-	user.UpdatedAt = time.Now()
-	_, err := conn(ctx, r.pool).Exec(ctx, query,
-		user.Email, user.Password, user.Verified, user.Avatar, user.UpdatedAt, user.ID)
+func (r *pgUserRepo) updateFields(ctx context.Context, query string, args ...any) error {
+	result, err := conn(ctx, r.pool).Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("updating user: %w", err)
 	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("user not found or changed")
+	}
 	return nil
+}
+
+// UpdateEmail also invalidates links sent to the previous mailbox atomically.
+func (r *pgUserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	return NewTransactor(r.pool).WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := r.updateFields(txCtx, `UPDATE users SET email=$2, verified=FALSE, updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, id, email); err != nil {
+			return err
+		}
+		// Use a new statement snapshot after acquiring the user lock so links
+		// committed by an issuance transaction we waited for are also revoked.
+		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE verification_tokens SET used=TRUE WHERE user_id=$1 AND NOT used`, id)
+		if err != nil {
+			return fmt.Errorf("revoking mailbox tokens: %w", err)
+		}
+		return nil
+	})
+}
+
+func (r *pgUserRepo) UpdateAvatar(ctx context.Context, id uuid.UUID, avatar string) error {
+	return r.updateFields(ctx, `UPDATE users SET avatar=$2,updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, id, avatar)
+}
+func (r *pgUserRepo) MarkVerified(ctx context.Context, id uuid.UUID, email string) error {
+	return r.updateFields(ctx, `UPDATE users SET verified=TRUE,updated_at=NOW() WHERE id=$1 AND email=$2 AND deleted_at IS NULL`, id, email)
+}
+func (r *pgUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, expectedPassword, password string) error {
+	return r.updateFields(ctx, `UPDATE users SET password=$3,session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND password=$2 AND deleted_at IS NULL`, id, expectedPassword, password)
+}
+func (r *pgUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) error {
+	return r.updateFields(ctx, `UPDATE users SET session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, id)
 }
 
 func (r *pgUserRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {

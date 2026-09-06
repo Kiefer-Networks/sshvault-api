@@ -21,7 +21,7 @@ func TestGenerateAndValidateTokenPair(t *testing.T) {
 	m := newTestJWTManager(t)
 	userID := uuid.New()
 
-	pair, refreshHash, err := m.GenerateTokenPair(userID)
+	pair, refreshHash, err := m.GenerateTokenPair(userID, 0)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestRefreshTokenHashDiffers(t *testing.T) {
 	m := newTestJWTManager(t)
 	userID := uuid.New()
 
-	pair, refreshHash, err := m.GenerateTokenPair(userID)
+	pair, refreshHash, err := m.GenerateTokenPair(userID, 0)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestValidateExpiredToken(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	m := NewJWTManager(priv, -1*time.Second, 7*24*time.Hour) // Already expired
 
-	pair, _, err := m.GenerateTokenPair(uuid.New())
+	pair, _, err := m.GenerateTokenPair(uuid.New(), 0)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestValidateTokenWrongKey(t *testing.T) {
 	m1 := newTestJWTManager(t)
 	m2 := newTestJWTManager(t)
 
-	pair, _, err := m1.GenerateTokenPair(uuid.New())
+	pair, _, err := m1.GenerateTokenPair(uuid.New(), 0)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestMultipleTokenPairsUniqueRefresh(t *testing.T) {
 	m := newTestJWTManager(t)
 	userID := uuid.New()
 
-	pair1, hash1, _ := m.GenerateTokenPair(userID)
-	pair2, hash2, _ := m.GenerateTokenPair(userID)
+	pair1, hash1, _ := m.GenerateTokenPair(userID, 0)
+	pair2, hash2, _ := m.GenerateTokenPair(userID, 0)
 
 	// Refresh tokens use uuid.New() so they must always differ
 	if pair1.RefreshToken == pair2.RefreshToken {
