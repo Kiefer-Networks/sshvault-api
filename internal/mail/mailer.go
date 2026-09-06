@@ -131,15 +131,16 @@ func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	return nil
 }
 
-// NoopMailer is a no-op mailer for development/self-hosted without SMTP config.
+// NoopMailer discards messages when SMTP is not configured. Development flows
+// that need activation or recovery links require a local SMTP test server.
 type NoopMailer struct{}
 
 func NewNoopMailer() *NoopMailer {
 	return &NoopMailer{}
 }
 
-func (m *NoopMailer) Send(_ context.Context, to, subject, body string) error {
-	log.Warn().Str("to", to).Str("subject", subject).Str("body", body).Msg("local mail delivery")
+func (m *NoopMailer) Send(_ context.Context, _, _, _ string) error {
+	log.Warn().Msg("mail discarded: configure SMTP_HOST to enable delivery")
 	return nil
 }
 
