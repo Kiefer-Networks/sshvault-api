@@ -508,7 +508,7 @@ func TestIntegrationEmailChangeRevokesTokenCommittedWhileWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var blocker int
 	if err = tx.QueryRow(ctx, "SELECT pg_backend_pid() FROM users WHERE id=$1 FOR UPDATE", u.ID).Scan(&blocker); err != nil {
 		t.Fatal(err)
