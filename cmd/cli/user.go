@@ -463,7 +463,6 @@ func userResetVaultCmd() *cobra.Command {
 				return nil
 			}
 
-			_, _ = pool.Exec(ctx, `DELETE FROM vault_history WHERE user_id = $1`, user.id)
 			result, err := pool.Exec(ctx, `DELETE FROM vaults WHERE user_id = $1`, user.id)
 			if err != nil {
 				return fmt.Errorf("deleting vault: %w", err)
