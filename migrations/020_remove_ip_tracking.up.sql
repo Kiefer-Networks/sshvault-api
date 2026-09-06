@@ -3,4 +3,8 @@
 ALTER TABLE devices DROP COLUMN IF EXISTS last_ip;
 
 -- Clear any existing plaintext IPs from audit logs.
-UPDATE audit_logs SET ip_address = '' WHERE ip_address != '' AND ip_address != '0.0.0.0';
+-- Migration statements execute in one transaction; trigger state also rolls
+-- back if clearing legacy rows fails.
+ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_no_update;
+UPDATE audit_logs SET ip_address = '' WHERE ip_address != '';
+ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_no_update;

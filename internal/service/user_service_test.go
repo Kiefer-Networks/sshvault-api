@@ -77,11 +77,11 @@ func (m *userSvcMockUserRepo) GetDeletedByEmail(_ context.Context, _ string) (*m
 	return nil, nil
 }
 
-func (m *userSvcMockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) (int64, error) {
-	return 0, nil
+func (m *userSvcMockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
+	return nil, nil
 }
 
-func (m *userSvcMockUserRepo) GetPurgableUserIDs(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
+func (m *userSvcMockUserRepo) HardDelete(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
 

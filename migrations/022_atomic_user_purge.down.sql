@@ -1,0 +1,2 @@
+-- Privacy erasure cannot be reversed. Keep the safe anonymization function
+-- for older application versions, which use the same signature.

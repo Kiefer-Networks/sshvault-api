@@ -20,6 +20,6 @@ type UserRepository interface {
 	UpdatePassword(ctx context.Context, id uuid.UUID, expectedPassword, password string) error
 	RevokeSessions(ctx context.Context, id uuid.UUID) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error
-	PurgeDeleted(ctx context.Context, olderThan time.Time) (int64, error)
-	GetPurgableUserIDs(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error)
+	PurgeDeleted(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error)
+	HardDelete(ctx context.Context, id uuid.UUID) ([]uuid.UUID, error)
 }

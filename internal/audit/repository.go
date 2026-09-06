@@ -3,11 +3,13 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,6 +25,30 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // Insert writes an audit entry to the database.
 func (r *Repository) Insert(ctx context.Context, e *Entry) error {
+	// Acquire the identity lock before touching audit_logs, matching purge's
+	// lock order. Buffered events arriving after deletion must not restore PII.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning audit insert: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	copyEntry := *e
+	e = &copyEntry
+	e.IPAddress = ""
+	if e.ActorID != nil {
+		var id uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR KEY SHARE`, e.ActorID).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			e.ActorID = nil
+			e.ActorEmail = ""
+			e.ResourceID = ""
+			e.UserAgent = ""
+			e.RequestID = ""
+			e.Details = nil
+		} else if err != nil {
+			return fmt.Errorf("locking audit actor: %w", err)
+		}
+	}
 	if e.ID == uuid.Nil {
 		e.ID = uuid.New()
 	}
@@ -46,7 +72,7 @@ func (r *Repository) Insert(ctx context.Context, e *Entry) error {
 			resource_type, resource_id, ip_address, user_agent, request_id, details, duration_ms)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 
-	_, err = r.pool.Exec(ctx, query,
+	_, err = tx.Exec(ctx, query,
 		e.ID, e.Timestamp, string(e.Level), string(e.Category), string(e.Action),
 		e.ActorID, e.ActorEmail, e.ResourceType, e.ResourceID,
 		e.IPAddress, e.UserAgent, e.RequestID, detailsJSON, e.DurationMS,
@@ -54,7 +80,7 @@ func (r *Repository) Insert(ctx context.Context, e *Entry) error {
 	if err != nil {
 		return fmt.Errorf("inserting audit log: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // Query retrieves audit logs matching the given filter.
@@ -158,8 +184,20 @@ func (r *Repository) Query(ctx context.Context, f QueryFilter) (*QueryResult, er
 
 // AnonymizeUser anonymizes PII for a given user using the database function.
 func (r *Repository) AnonymizeUser(ctx context.Context, userID uuid.UUID) (int, error) {
+	return anonymizeUser(ctx, r.pool, userID)
+}
+
+// AnonymizeUserTx joins the caller's deletion transaction. Identity must still
+// exist so legacy entries identified only by email can also be erased.
+func AnonymizeUserTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (int, error) {
+	return anonymizeUser(ctx, tx, userID)
+}
+
+func anonymizeUser(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, userID uuid.UUID) (int, error) {
 	var affected int
-	err := r.pool.QueryRow(ctx, "SELECT audit_anonymize_user($1)", userID).Scan(&affected)
+	err := db.QueryRow(ctx, "SELECT audit_anonymize_user($1)", userID).Scan(&affected)
 	if err != nil {
 		return 0, fmt.Errorf("anonymizing audit logs for user %s: %w", userID, err)
 	}

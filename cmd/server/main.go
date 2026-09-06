@@ -198,27 +198,11 @@ func main() {
 			case <-ticker.C:
 				cutoff := time.Now().Add(-30 * 24 * time.Hour)
 
-				// Get user IDs before purge for audit anonymization
-				purgableIDs, err := userRepo.GetPurgableUserIDs(bgCtx, cutoff)
-				if err != nil {
-					log.Error().Err(err).Msg("failed to get purgable user ids")
-				}
-
-				n, err := userRepo.PurgeDeleted(bgCtx, cutoff)
+				deleted, err := userRepo.PurgeDeleted(bgCtx, cutoff)
 				if err != nil {
 					log.Error().Err(err).Msg("failed to purge deleted users")
-				} else if n > 0 {
-					log.Info().Int64("count", n).Msg("purged soft-deleted users")
-				}
-
-				// Anonymize audit logs for purged users
-				for _, uid := range purgableIDs {
-					affected, err := auditRepo.AnonymizeUser(bgCtx, uid)
-					if err != nil {
-						log.Error().Err(err).Str("user_id", uid.String()).Msg("failed to anonymize audit logs")
-					} else if affected > 0 {
-						log.Info().Int("count", affected).Str("user_id", uid.String()).Msg("anonymized audit logs for purged user")
-					}
+				} else if len(deleted) > 0 {
+					log.Info().Int("count", len(deleted)).Msg("purged soft-deleted users")
 				}
 			}
 		}

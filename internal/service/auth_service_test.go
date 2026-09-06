@@ -64,9 +64,11 @@ func (m *mockUserRepo) GetDeletedByEmail(_ context.Context, _ string) (*model.Us
 
 func (m *mockUserRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return nil }
 
-func (m *mockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) (int64, error) { return 0, nil }
+func (m *mockUserRepo) PurgeDeleted(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
+	return nil, nil
+}
 
-func (m *mockUserRepo) GetPurgableUserIDs(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
+func (m *mockUserRepo) HardDelete(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
 

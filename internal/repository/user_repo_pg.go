@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
 	"github.com/kiefernetworks/shellvault-server/internal/model"
 )
 
@@ -162,60 +163,77 @@ func (r *pgUserRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) (int64, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("beginning purge transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	// Delete all related data for soft-deleted users older than the cutoff.
-	// Order matters: child tables first, then the user.
-	queries := []string{
-		`DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		`DELETE FROM verification_tokens WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		// vault_history has no user_id — join through vaults
-		`DELETE FROM vault_history WHERE vault_id IN (SELECT v.id FROM vaults v JOIN users u ON v.user_id = u.id WHERE u.deleted_at IS NOT NULL AND u.deleted_at < $1)`,
-		`DELETE FROM vaults WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		`DELETE FROM devices WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-		// login_attempts has no user_id — match by email
-		`DELETE FROM login_attempts WHERE email IN (SELECT email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1)`,
-	}
-
-	for _, q := range queries {
-		if _, err := tx.Exec(ctx, q, olderThan); err != nil {
-			return 0, fmt.Errorf("purging related data: %w", err)
-		}
-	}
-
-	// Finally delete the user rows
-	result, err := tx.Exec(ctx, `DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1`, olderThan)
-	if err != nil {
-		return 0, fmt.Errorf("purging deleted users: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("committing purge transaction: %w", err)
-	}
-
-	return result.RowsAffected(), nil
+// PurgeDeleted returns only IDs whose anonymization and deletion committed.
+func (r *pgUserRepo) PurgeDeleted(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error) {
+	return r.deleteUsers(ctx, `SELECT id, email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1 ORDER BY id FOR UPDATE`, olderThan)
 }
 
-func (r *pgUserRepo) GetPurgableUserIDs(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < $1`, olderThan)
-	if err != nil {
-		return nil, fmt.Errorf("getting purgable user ids: %w", err)
-	}
-	defer rows.Close()
+// HardDelete explicitly deletes an account in any state, using the same atomic
+// anonymization and deletion path as scheduled retention.
+func (r *pgUserRepo) HardDelete(ctx context.Context, id uuid.UUID) ([]uuid.UUID, error) {
+	return r.deleteUsers(ctx, `SELECT id, email FROM users WHERE id = $1 ORDER BY id FOR UPDATE`, id)
+}
 
+func (r *pgUserRepo) deleteUsers(ctx context.Context, selection string, arg any) ([]uuid.UUID, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning purge transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	rows, err := tx.Query(ctx, selection, arg)
+	if err != nil {
+		return nil, fmt.Errorf("locking purge candidates: %w", err)
+	}
 	var ids []uuid.UUID
+	var emails []string
+	for rows.Next() {
+		var id uuid.UUID
+		var email string
+		if err := rows.Scan(&id, &email); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("reading purge candidates: %w", err)
+		}
+		ids = append(ids, id)
+		emails = append(emails, email)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading purge candidates: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// Complete candidate discovery before any audit or child mutation. The locks
+	// prevent activation or new FK-linked children until the transaction ends.
+	for _, id := range ids {
+		if _, err := audit.AnonymizeUserTx(ctx, tx, id); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM login_attempts WHERE email = ANY($1::text[])`, emails); err != nil {
+		return nil, fmt.Errorf("purging login attempts: %w", err)
+	}
+	// All other children have ON DELETE CASCADE foreign keys, including history
+	// through vaults. Delete only the stable, locked IDs; never reselect candidates.
+	rows, err = tx.Query(ctx, `DELETE FROM users WHERE id = ANY($1::uuid[]) RETURNING id`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("purging users: %w", err)
+	}
+	var deleted []uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scanning user id: %w", err)
+			rows.Close()
+			return nil, err
 		}
-		ids = append(ids, id)
+		deleted = append(deleted, id)
 	}
-	return ids, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing purge: %w", err)
+	}
+	return deleted, nil
 }

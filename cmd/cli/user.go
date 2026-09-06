@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 	"github.com/spf13/cobra"
 )
 
@@ -185,10 +186,12 @@ func userDeleteCmd() *cobra.Command {
 					fmt.Println("Aborted.")
 					return nil
 				}
-				// Hard delete cascades via foreign keys
-				_, err = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, user.id)
+				deleted, err := repository.NewUserRepository(pool).HardDelete(ctx, user.id)
 				if err != nil {
 					return fmt.Errorf("hard delete: %w", err)
+				}
+				if len(deleted) == 0 {
+					return fmt.Errorf("user already deleted")
 				}
 				fmt.Printf("User %s permanently deleted.\n", user.email)
 			} else {

@@ -48,8 +48,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActRegister).
 			Level(audit.LevelWarn).
-			Detail("email", req.Email).
-			Detail("error", err.Error()).
+			Detail("email", "[redacted]").
 			Send()
 		msg := err.Error()
 		switch {
@@ -90,7 +89,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.audit.LogFromRequest(r, audit.CatAuth, audit.ActLoginFailed).
 			Level(audit.LevelWarn).
-			Detail("email", req.Email).
+			Detail("email", "[redacted]").
 			Send()
 		respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
