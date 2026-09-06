@@ -1,7 +1,11 @@
 openapi: "3.1.0"
 info:
   title: SSHVault API
-  description: Zero-Knowledge encrypted sync server for the SSHVault SSH client app. Protected routes return 403 verification_required for new unverified accounts. Accounts grandfathered by migration 023 retain login and sync access without changing their verified value.
+  description: |
+    Zero-Knowledge encrypted sync server for the SSHVault SSH client app.
+    Protected routes return 403 `verification_required` for new unverified accounts. Accounts grandfathered by migration 023 retain login and sync access without changing their verified value.
+
+    Unless an operation describes a more specific error, JSON endpoints use `ErrorResponse`. Request processing can return 400 for malformed input, 413 for an oversized body, 415 for an unsupported media type, 429 when rate limited, and 500 for an internal failure. Bearer-protected operations can additionally return 401 for an invalid, expired, or revoked access token, 403 `verification_required`, and 503 when authentication state cannot be checked.
   version: "1.0.0"
   contact:
     name: Kiefer Networks
@@ -52,10 +56,15 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [status]
+                additionalProperties: false
                 properties:
                   status:
                     type: string
-                    example: ok
+                    const: ok
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /ready:
     get:
@@ -65,12 +74,25 @@ paths:
       responses:
         "200":
           description: Server and database are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status:
+                    type: string
+                    const: ready
         "503":
           description: Database not ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/challenge:
     get:
@@ -101,6 +123,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+        default:
+          $ref: "#/components/responses/DefaultError"
+
   /v1/auth/register:
     post:
       tags: [Auth]
@@ -111,6 +136,7 @@ paths:
         - $ref: "#/components/parameters/PowChallenge"
         - $ref: "#/components/parameters/PowNonce"
       requestBody:
+        description: Email address and initial password used only to equalize registration work; mailbox activation installs a separately chosen password.
         required: true
         content:
           application/json:
@@ -124,7 +150,8 @@ paths:
                   format: email
                 password:
                   type: string
-                  minLength: 8
+                  x-minBytes: 8
+                  x-maxBytes: 256
       responses:
         "202":
           description: Registration accepted without account identifiers or credentials
@@ -145,6 +172,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+        default:
+          $ref: "#/components/responses/DefaultError"
+
   /v1/auth/login:
     post:
       tags: [Auth]
@@ -155,6 +185,7 @@ paths:
         - $ref: "#/components/parameters/PowChallenge"
         - $ref: "#/components/parameters/PowNonce"
       requestBody:
+        description: Account credentials and an optional display name recorded with the refresh session.
         required: true
         content:
           application/json:
@@ -190,11 +221,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Invalid or expired proof of work
+          description: Invalid or expired proof of work, or mailbox verification is required
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/refresh:
     post:
@@ -203,6 +237,7 @@ paths:
       description: Each refresh token can be rotated once. Reusing a consumed token revokes all account sessions, including the replacement token. Clients must serialize refresh requests and sign in again after replay rejection.
       operationId: refreshToken
       requestBody:
+        description: The current single-use refresh token.
         required: true
         content:
           application/json:
@@ -227,22 +262,35 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+        default:
+          $ref: "#/components/responses/DefaultError"
+
   /v1/auth/logout:
     post:
       tags: [Auth]
       summary: Revoke refresh token
       operationId: logout
       requestBody:
+        description: The refresh token to revoke. An empty or unknown token still receives an opaque success response.
+        required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 refresh_token:
                   type: string
       responses:
         "200":
           description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/verify-email:
     get:
@@ -254,6 +302,7 @@ paths:
         - name: token
           in: query
           required: true
+          description: Single-use mailbox verification token from the activation email.
           schema:
             type: string
       responses:
@@ -265,12 +314,20 @@ paths:
                 type: string
         "400":
           description: Missing token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     post:
       tags: [Auth]
       summary: Verify mailbox and activate a new account
-      description: Consumes a single-use mailbox token. For a new account, atomically verifies the address and installs only the new_password chosen by the mailbox owner here, ignoring all prior signup passwords. Grandfathered verification preserves existing credentials. Password length is enforced as 8–256 UTF-8 bytes. Sign in separately after activation.
+      description: Consumes a single-use mailbox token. For a new account, atomically verifies the address and installs only the new_password chosen by the mailbox owner here, ignoring all prior signup passwords. Grandfathered verification preserves existing credentials. Password length is enforced as 8â€“256 UTF-8 bytes. Sign in separately after activation.
       operationId: verifyEmail
       requestBody:
+        description: Single-use mailbox token and the password selected by the mailbox owner. JSON and HTML form submissions are accepted.
         required: true
         content:
           application/json:
@@ -285,17 +342,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: email verified
+                $ref: "#/components/schemas/StatusResponse"
         "400":
           description: Invalid password length, missing fields, or invalid/expired/consumed token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/confirm-email-change:
     get:
@@ -307,6 +363,7 @@ paths:
         - name: token
           in: query
           required: true
+          description: Single-use token from the email-change confirmation message.
           schema:
             type: string
       responses:
@@ -318,12 +375,20 @@ paths:
                 type: string
         "400":
           description: Missing token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     post:
       tags: [Auth]
       summary: Confirm a pending email change
       description: Consumes a purpose-specific one-hour token once. Atomically installs and verifies the pending address, clears pending_email, revokes all sessions and obsolete email/reset tokens. Sign in again afterward. Password changes and resets cancel pending changes.
       operationId: confirmEmailChange
       requestBody:
+        description: Pending email-change token. JSON and HTML form submissions are accepted.
         required: true
         content:
           application/json:
@@ -347,13 +412,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: email changed; sign in again
+                $ref: "#/components/schemas/StatusResponse"
         "400":
           description: Missing, expired, used, superseded, or conflicting email change token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/forgot-password:
     post:
@@ -361,11 +429,12 @@ paths:
       summary: Request password reset
       operationId: forgotPassword
       requestBody:
+        description: Recovery email address. The response is deliberately identical for known and unknown accounts.
+        required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email]
               additionalProperties: false
               properties:
                 email:
@@ -374,6 +443,13 @@ paths:
       responses:
         "200":
           description: Reset link sent if email exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/reset-password:
     post:
@@ -381,6 +457,7 @@ paths:
       summary: Reset password with token
       operationId: resetPassword
       requestBody:
+        description: Single-use password-reset token and replacement password.
         required: true
         content:
           application/json:
@@ -393,10 +470,24 @@ paths:
                   type: string
                 new_password:
                   type: string
-                  minLength: 8
+                  x-minBytes: 8
+                  x-maxBytes: 256
       responses:
         "200":
           description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          description: Missing fields, invalid password length, or invalid, expired, or consumed token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/vault:
     get:
@@ -412,6 +503,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VaultResponse"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     put:
       tags: [Vault]
       summary: Upload vault blob (optimistic locking)
@@ -420,6 +514,7 @@ paths:
       security:
         - bearerAuth: []
       requestBody:
+        description: New encrypted vault version, Base64 blob, and the client's SHA-256 checksum.
         required: true
         content:
           application/json:
@@ -444,7 +539,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VaultWriteResponse"
+                $ref: "#/components/schemas/VaultResponse"
         "409":
           description: Version conflict
           content:
@@ -453,6 +548,13 @@ paths:
                 $ref: "#/components/schemas/ConflictError"
         "413":
           description: Request exceeds the configured upload limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/vault/history:
     get:
@@ -468,11 +570,16 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [history]
+                additionalProperties: false
                 properties:
                   history:
                     type: array
                     items:
                       $ref: "#/components/schemas/VaultHistoryEntry"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/vault/history/{version}:
     get:
@@ -485,8 +592,10 @@ paths:
         - name: version
           in: path
           required: true
+          description: Positive vault version number.
           schema:
             type: integer
+            minimum: 1
       responses:
         "200":
           description: Historical vault version
@@ -500,6 +609,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/user:
     get:
@@ -515,6 +627,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     put:
       tags: [User]
       summary: Update profile or request a password-authenticated email change
@@ -523,6 +638,8 @@ paths:
       security:
         - bearerAuth: []
       requestBody:
+        description: Profile fields to update. Changing the recovery email also requires the current password.
+        required: true
         content:
           application/json:
             schema:
@@ -532,6 +649,7 @@ paths:
                 email:
                   type: string
                   format: email
+                  maxLength: 254
                 current_password:
                   type: string
                   description: Required when changing email.
@@ -543,18 +661,26 @@ paths:
               schema:
                 type: object
                 required: [status]
+                additionalProperties: false
                 properties:
                   status:
                     type: string
                     const: pending_confirmation
         "400":
           description: Invalid email, current password, unavailable email change, or recipient cooldown (retry after one minute)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "200":
           description: Updated user profile
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     delete:
       tags: [User]
       summary: Delete account (soft delete, purge after 30 days)
@@ -564,6 +690,13 @@ paths:
       responses:
         "202":
           description: Account deletion scheduled (30-day grace period)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/user/password:
     put:
@@ -573,6 +706,7 @@ paths:
       security:
         - bearerAuth: []
       requestBody:
+        description: Current password and replacement password.
         required: true
         content:
           application/json:
@@ -585,10 +719,18 @@ paths:
                   type: string
                 new_password:
                   type: string
-                  minLength: 8
+                  x-minBytes: 8
+                  x-maxBytes: 256
       responses:
         "200":
           description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/devices/{id}:
     delete:
@@ -601,12 +743,16 @@ paths:
         - name: id
           in: path
           required: true
+          description: Device identifier owned by the authenticated account.
           schema:
             type: string
             format: uuid
       responses:
         "204":
           description: Device removed
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/attestation:
     get:
@@ -624,6 +770,7 @@ paths:
           description: Client-generated nonce (max 128 characters)
           schema:
             type: string
+            minLength: 1
             maxLength: 128
       responses:
         "200":
@@ -644,6 +791,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Attestation nonce capacity temporarily exhausted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
+
+  /v1/attestation/pubkey:
+    get:
+      tags: [Attestation]
+      summary: Get server attestation public key
+      description: Returns the raw 32-byte Ed25519 public key encoded with standard Base64.
+      operationId: getAttestationPublicKey
+      responses:
+        "200":
+          description: Server attestation public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKeyResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/user/avatar:
     put:
@@ -653,6 +826,7 @@ paths:
       security:
         - bearerAuth: []
       requestBody:
+        description: Standard Base64 image payload.
         required: true
         content:
           application/json:
@@ -663,7 +837,8 @@ paths:
               properties:
                 avatar:
                   type: string
-                  description: Base64-encoded avatar image (max 512 KB)
+                  contentEncoding: base64
+                  description: Standard Base64 image data; the encoded value is limited to 512 KiB and the decoded image to 256 KiB.
                   maxLength: 524288
       responses:
         "200":
@@ -673,11 +848,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "413":
-          description: Avatar exceeds 512 KB size limit
+          description: Encoded avatar exceeds the 512 KiB request-field limit
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     delete:
       tags: [User]
       summary: Delete user avatar
@@ -690,11 +868,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: avatar deleted
+                $ref: "#/components/schemas/StatusResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/auth/logout-all:
     post:
@@ -709,17 +886,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: all sessions revoked
+                $ref: "#/components/schemas/StatusResponse"
         "500":
           description: Failed to revoke sessions
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+        default:
+          $ref: "#/components/responses/DefaultError"
 
   /v1/audit:
     get:
@@ -760,7 +936,7 @@ paths:
           schema:
             type: integer
             minimum: 1
-          description: Maximum number of entries to return
+          description: Requested number of entries; values above 100 are clamped to 100.
         - name: offset
           in: query
           schema:
@@ -781,6 +957,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+        default:
+          $ref: "#/components/responses/DefaultError"
+
   /v1/devices:
     get:
       tags: [Devices]
@@ -795,11 +974,16 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [devices]
+                additionalProperties: false
                 properties:
                   devices:
                     type: array
                     items:
                       $ref: "#/components/schemas/Device"
+        default:
+          $ref: "#/components/responses/DefaultError"
+
     post:
       tags: [Devices]
       summary: Register a new device
@@ -807,6 +991,7 @@ paths:
       security:
         - bearerAuth: []
       requestBody:
+        description: Human-readable device name and optional platform label.
         required: true
         content:
           application/json:
@@ -838,9 +1023,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+        default:
+          $ref: "#/components/responses/DefaultError"
+
 components:
+  responses:
+    DefaultError:
+      description: Error response not listed separately by the operation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   securitySchemes:
     bearerAuth:
+      description: Short-lived access token returned by login or refresh.
       type: http
       scheme: bearer
       bearerFormat: JWT
@@ -865,6 +1062,7 @@ components:
 
   schemas:
     VerifyEmailRequest:
+      description: Mailbox activation token and the password chosen during activation.
       type: object
       required: [token, new_password]
       additionalProperties: false
@@ -874,24 +1072,25 @@ components:
         new_password:
           type: string
           format: password
-          minLength: 8
-          maxLength: 256
-          description: Password chosen by the mailbox owner; the server enforces 8–256 UTF-8 bytes.
+          x-minBytes: 8
+          x-maxBytes: 256
+          description: Password chosen by the mailbox owner; the server enforces 8â€“256 UTF-8 bytes.
 
     ErrorResponse:
+      description: Standard JSON error body.
       type: object
-      required:
-        - error
+      required: [error]
+      additionalProperties: false
       properties:
         error:
           type: string
           description: Human-readable error message
 
     ConflictError:
+      description: Optimistic-lock conflict containing the current stored vault version.
       type: object
-      required:
-        - current_version
-        - message
+      required: [current_version, message]
+      additionalProperties: false
       properties:
         current_version:
           type: integer
@@ -899,7 +1098,10 @@ components:
           type: string
 
     PowChallenge:
+      description: Short-lived proof-of-work challenge and its required difficulty.
       type: object
+      required: [challenge, difficulty, expires_at]
+      additionalProperties: false
       properties:
         challenge:
           type: string
@@ -916,6 +1118,7 @@ components:
           example: 1741170120
 
     RegistrationResponse:
+      description: Opaque registration result that does not reveal account existence.
       type: object
       required: [status]
       additionalProperties: false
@@ -925,7 +1128,10 @@ components:
           const: If registration is available, check your email to verify your account.
 
     AuthResponse:
+      description: Authenticated user and a newly issued access/refresh token pair.
       type: object
+      required: [user, access_token, refresh_token, expires_at]
+      additionalProperties: false
       properties:
         user:
           $ref: "#/components/schemas/User"
@@ -938,7 +1144,10 @@ components:
           format: int64
 
     User:
+      description: Public profile fields for the authenticated account.
       type: object
+      required: [id, email, verified, created_at, updated_at]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -955,7 +1164,8 @@ components:
           description: Actual mailbox verification state. Pre-upgrade accounts remain authorized even when false.
         avatar:
           type: string
-          description: Base64-encoded avatar image (max 512 KB)
+          contentEncoding: base64
+          description: Standard Base64 image data; the encoded value is limited to 512 KiB and the decoded image to 256 KiB.
         created_at:
           type: string
           format: date-time
@@ -964,7 +1174,10 @@ components:
           format: date-time
 
     VaultResponse:
+      description: One encrypted vault version. Blob and checksum are absent when no vault exists yet.
       type: object
+      required: [version, updated_at]
+      additionalProperties: false
       properties:
         version:
           type: integer
@@ -977,19 +1190,11 @@ components:
           type: integer
           format: int64
 
-    VaultWriteResponse:
-      type: object
-      properties:
-        version:
-          type: integer
-        checksum:
-          type: string
-        updated_at:
-          type: string
-          format: date-time
-
     VaultHistoryEntry:
+      description: Metadata for a retained encrypted vault version.
       type: object
+      required: [version, checksum, created_at]
+      additionalProperties: false
       properties:
         version:
           type: integer
@@ -1000,7 +1205,10 @@ components:
           format: int64
 
     Device:
+      description: Device registered to the authenticated account.
       type: object
+      required: [id, user_id, name, platform, created_at]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -1015,8 +1223,6 @@ components:
         last_sync:
           type: string
           format: date-time
-        last_ip:
-          type: string
         last_seen:
           type: string
           format: date-time
@@ -1025,7 +1231,10 @@ components:
           format: date-time
 
     AttestationResponse:
+      description: Server identity statement signed with the configured Ed25519 attestation key.
       type: object
+      required: [server_id, timestamp, api_version, nonce, signature]
+      additionalProperties: false
       properties:
         server_id:
           type: string
@@ -1042,10 +1251,29 @@ components:
           description: Client-provided nonce echoed back
         signature:
           type: string
+          contentEncoding: base64
+          minLength: 88
+          maxLength: 88
           description: Base64-encoded Ed25519 signature of "server_id|timestamp|api_version|nonce"
 
-    AuditEntry:
+    PublicKeyResponse:
+      description: Public verification key for server attestations.
       type: object
+      required: [public_key]
+      additionalProperties: false
+      properties:
+        public_key:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+          description: Standard Base64 encoding of the raw 32-byte Ed25519 public key.
+
+    AuditEntry:
+      description: One sanitized audit event visible to its owning account.
+      type: object
+      required: [id, timestamp, level, category, action]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -1061,6 +1289,7 @@ components:
           enum: [AUTH, VAULT, DEVICE, USER, SYSTEM]
         action:
           type: string
+          enum: [REGISTER, LOGIN, LOGIN_FAILED, REFRESH_TOKEN, LOGOUT, LOGOUT_ALL, VERIFY_EMAIL, FORGOT_PASSWORD, RESET_PASSWORD, SYNC_PULL, SYNC_PUSH, HISTORY_VIEW, PROFILE_VIEW, PROFILE_UPDATE, PASSWORD_CHANGE, ACCOUNT_DELETE, DEVICE_REGISTER, DEVICE_LIST, DEVICE_DELETE, STARTUP, SHUTDOWN]
         actor_id:
           type: string
           format: uuid
@@ -1083,7 +1312,10 @@ components:
           type: integer
 
     AuditQueryResult:
+      description: Paginated audit events and result metadata.
       type: object
+      required: [audit_logs, total, limit, offset]
+      additionalProperties: false
       properties:
         audit_logs:
           type: array
@@ -1097,3 +1329,24 @@ components:
         offset:
           type: integer
 
+    StatusResponse:
+      description: Successful operation status.
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+
+    AccountDeletionResponse:
+      description: Confirmation that the account entered its 30-day deletion grace period.
+      type: object
+      required: [status, message]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          const: account scheduled for deletion
+        message:
+          type: string
+          const: Your account and data will be permanently deleted in 30 days.

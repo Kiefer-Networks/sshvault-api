@@ -28,6 +28,48 @@ jobs:
           go-version-file: go.mod
       - name: Verify dependencies
         run: go mod verify
+      - name: Validate OpenAPI contract
+        run: |
+          expected_operations=$(mktemp)
+          actual_operations=$(mktemp)
+          cat >"$expected_operations" <<'EOF'
+          DELETE /v1/devices/{id}
+          DELETE /v1/user
+          DELETE /v1/user/avatar
+          GET /health
+          GET /ready
+          GET /v1/attestation
+          GET /v1/attestation/pubkey
+          GET /v1/audit
+          GET /v1/auth/challenge
+          GET /v1/auth/confirm-email-change
+          GET /v1/auth/verify-email
+          GET /v1/devices
+          GET /v1/user
+          GET /v1/vault
+          GET /v1/vault/history
+          GET /v1/vault/history/{version}
+          POST /v1/auth/confirm-email-change
+          POST /v1/auth/forgot-password
+          POST /v1/auth/login
+          POST /v1/auth/logout
+          POST /v1/auth/logout-all
+          POST /v1/auth/refresh
+          POST /v1/auth/register
+          POST /v1/auth/reset-password
+          POST /v1/auth/verify-email
+          POST /v1/devices
+          PUT /v1/user
+          PUT /v1/user/avatar
+          PUT /v1/user/password
+          PUT /v1/vault
+          EOF
+          awk '/^  \/[^:]*:$/ { path=$1; sub(/:$/, "", path) }
+               /^    (get|post|put|delete|patch):$/ { method=toupper($1); sub(/:$/, "", method); print method, path }' \
+            api/openapi.yaml | sort >"$actual_operations"
+          sort -o "$expected_operations" "$expected_operations"
+          diff -u "$expected_operations" "$actual_operations"
+          go run github.com/getkin/kin-openapi/cmd/validate@v0.149.0 api/openapi.yaml
       - name: Check formatting
         run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
       - name: Validate workflows
