@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kiefernetworks/shellvault-server/internal/audit"
+	"github.com/kiefernetworks/shellvault-server/internal/service"
 )
 
 // newAuthHandler creates a minimal AuthHandler with nil services for input-validation tests.
@@ -191,5 +194,20 @@ func TestLoginMissingFields(t *testing.T) {
 	msg := decodeError(t, rec)
 	if msg != "email and password are required" {
 		t.Errorf("error = %q, want %q", msg, "email and password are required")
+	}
+}
+
+func TestLoginOversizedPasswordReturnsInvalidCredentials(t *testing.T) {
+	// No repositories are provided: rejection must precede account-dependent work.
+	h := NewAuthHandler(&service.AuthService{}, audit.NewNopLogger())
+	for _, password := range []string{strings.Repeat("a", 257), strings.Repeat("\u00e4", 129)} {
+		body := `{"email":"login@example.com","password":"` + password + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.Login(rec, req)
+		if rec.Code != http.StatusUnauthorized || decodeError(t, rec) != "invalid credentials" {
+			t.Fatalf("oversized password response: %d %s", rec.Code, rec.Body)
+		}
 	}
 }

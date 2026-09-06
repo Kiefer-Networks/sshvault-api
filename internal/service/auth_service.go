@@ -275,6 +275,12 @@ func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *mo
 }
 
 func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {
+	// Match the byte limit enforced when passwords are set. Reject before any
+	// account lookup or Argon2 work, without revealing whether the account exists.
+	if len(req.Password) > 256 {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
 	req.Email = NormalizeEmail(req.Email)
 
 	if err := ValidateEmail(req.Email); err != nil {
