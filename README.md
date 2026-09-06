@@ -22,14 +22,14 @@
 
 ## Architecture
 
-SSHVault uses a Zero-Knowledge architecture: the server never sees plaintext data. Clients encrypt everything locally using AES-256-GCM with Argon2id key derivation. The server stores only opaque encrypted blobs.
+SSHVault uses a Zero-Knowledge design for vault contents: clients encrypt vault payloads locally using AES-256-GCM with Argon2id key derivation, and the server stores those payloads as opaque encrypted blobs. Account operation still requires server-readable email addresses, password hashes, device metadata, and audit metadata.
 
 ### Key Features
 
 - **Encrypted Blob Sync** with optimistic locking and version history
 - **Ed25519 JWT authentication** with refresh token rotation
-- **Zero-Knowledge IP privacy** — no plaintext IPs stored anywhere (hashed for brute-force only)
-- **Self-Hosted friendly** — server cannot read vault contents
+- **Application-level IP privacy** — application and audit storage omit plaintext IPs; brute-force state uses deterministic SHA-256 pseudonyms
+- **Self-Hosted friendly** — server cannot read plaintext vault contents
 - **Admin CLI** for user management and database backups
 
 ### Privacy by Design
@@ -54,16 +54,22 @@ The server follows strict privacy principles:
 
 ```bash
 cp .env.example .env
-# Edit .env with your database URL
+# Set the same raw password in DATABASE_PASSWORD and POSTGRES_PASSWORD.
+# Keep DATABASE_URL free of credentials; the application inserts and URL-encodes it.
+# Use development mode and configure the remaining values.
 
 # Generate JWT signing key
 make keygen
 
 # Start PostgreSQL (via Docker)
-docker compose -f docker/docker-compose.yml up postgres -d
+docker compose --env-file .env -f docker/docker-compose.yml up postgres -d
 
-# Run migrations and start server
-make migrate
+# Export .env for the native Go process (POSIX shell)
+set -a
+. ./.env
+set +a
+
+# Start the server; it applies pending migrations automatically
 make run
 ```
 
@@ -71,10 +77,10 @@ make run
 
 ```bash
 cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD, TRUSTED_PROXIES, etc.
+# Edit .env — set POSTGRES_PASSWORD, SMTP_HOST, TRUSTED_PROXIES, etc.
 ```
 
-Compose supplies the server and backup containers with the internal database host `postgres` and safely URL-encodes `POSTGRES_PASSWORD`. `DATABASE_URL` remains the native-host connection string used by `make migrate`, `make run`, and direct CLI commands.
+Compose supplies the server and backup containers with the internal database host `postgres` and safely URL-encodes `POSTGRES_PASSWORD`. `DATABASE_URL` remains the native-host connection string used by `make migrate`, `make run`, and direct CLI commands. Configure SMTP before enabling registration or recovery in production; the fallback mailer writes complete messages and one-time links to the application log and is intended only for isolated development.
 
 #### Build
 
@@ -109,10 +115,26 @@ docker compose --env-file .env -f docker/docker-compose.yml logs -f server
 #### Update (rebuild + restart)
 
 ```bash
-git pull
+# Create and retain a verified backup plus its manifest before updating
+docker compose --env-file .env -f docker/docker-compose.yml exec backup ./sshvault-cli backup create
+
+# Fetch and inspect the intended release, then check out that exact tag
+git fetch --tags
+git checkout <reviewed-release-tag>
 docker compose --env-file .env -f docker/docker-compose.yml build
 docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate
+
+# Poll database-backed readiness for up to 60 seconds through the default host binding.
+# Replace the URL if HOST_PORT uses a different address or port.
+attempt=0
+until curl --fail http://127.0.0.1:8080/ready; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 30 ] || exit 1
+  sleep 2
+done
 ```
+
+Some database migrations are forward-only. Keep the pre-update backup and manifest: switching only the application binary back to an older version is not a guaranteed rollback after migrations have run.
 
 > **Note:** Compose sets `SERVER_ADDR=0.0.0.0:8080` inside the server container. The port mapping in `docker-compose.yml` (`127.0.0.1:8080:8080`) ensures the server is only reachable via localhost on the host. A reverse proxy is **required** for TLS termination — see [Reverse Proxy Setup](#reverse-proxy-setup) below.
 
@@ -122,7 +144,7 @@ The `sshvault-cli` binary is included in the Docker image and provides admin com
 
 ### Using the CLI in Docker
 
-Run CLI commands via `docker compose exec` against the running server container:
+Run CLI commands via `docker compose exec` against the appropriate running service container:
 
 ```bash
 # Shorthand (set once)
@@ -165,6 +187,9 @@ $COMPOSE logs -f backup
 
 ```bash
 make build-cli
+set -a
+. ./.env
+set +a
 ./bin/sshvault-cli user list
 ./bin/sshvault-cli backup create -o ./backups
 ```
@@ -197,11 +222,13 @@ make build-cli
 
 Keep each `.sql.gz` dump together with its `.manifest.json` sidecar. Both are captured from one PostgreSQL snapshot; the versioned sidecar contains the dump's SHA-256 digest. Restore rejects missing, legacy, or mismatched sidecars before changing the database. Temporary `.partial` files are incomplete backups and are not listed or retained as completed backups.
 
+The digest detects accidental corruption; it does not authenticate the backup when an attacker can replace both files. Dumps contain sensitive account and audit data. Encrypt backups with separately managed keys, authenticate or sign their manifests, store copies in immutable off-site storage, and test restoration regularly.
+
 Restore pauses account mutations and other restores with a database maintenance lock, captures retained deletions after acquiring that lock, and preserves the latest deletion timestamp during reconciliation. All restored sessions and verification tokens are invalidated in the restore transaction. The explicit `--no-reconcile` override permits old or unbound backups and skips deleted-account preservation; it still invalidates tokens and holds the maintenance lock. Server and CLI processes must run the updated code to participate in this coordination.
 
 ## Reverse Proxy Setup
 
-The server does not handle TLS itself. You **must** place a reverse proxy in front of it. Below are production-ready configurations for Caddy, Nginx, Apache, and Traefik.
+The server does not handle TLS itself. You **must** place a reverse proxy in front of it. The following deployment templates require review for your network, certificate, logging, and secret-management environment before production use. Their access logs can contain plaintext client IP addresses even though the SSHVault application does not log them.
 
 Each configuration includes optional security hardening directives (commented out). Uncomment the ones you need based on your threat model.
 
@@ -300,6 +327,7 @@ Set in `.env`:
 ```
 TRUSTED_PROXIES=127.0.0.1/8,::1/128
 API_BASE_URL=https://api.example.com
+APP_BASE_URL=https://app.example.com
 ```
 
 ### Option B: Nginx
@@ -386,6 +414,7 @@ Set in `.env`:
 ```
 TRUSTED_PROXIES=127.0.0.1/8,::1/128
 API_BASE_URL=https://api.example.com
+APP_BASE_URL=https://app.example.com
 ```
 
 ### Option C: Apache
@@ -469,6 +498,7 @@ Set in `.env`:
 ```
 TRUSTED_PROXIES=127.0.0.1/8,::1/128
 API_BASE_URL=https://api.example.com
+APP_BASE_URL=https://app.example.com
 ```
 
 ### Option D: Traefik
@@ -478,7 +508,7 @@ Create `traefik/docker-compose.override.yml` alongside the main compose file:
 ```yaml
 services:
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.7.5@sha256:e4d98158c01ad752fc1071d4e9573788747230d902cdde00a772516e692d07c9
     command:
       # Disable the dashboard (not needed for API-only usage):
       - "--api.dashboard=false"
@@ -501,6 +531,8 @@ services:
       - "80:80"
       - "443:443"
     volumes:
+      # Docker-socket access is host-sensitive. Prefer a restricted socket proxy
+      # when the deployment platform supports one.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - letsencrypt:/letsencrypt
     restart: unless-stopped
@@ -545,11 +577,13 @@ docker compose -f docker/docker-compose.yml -f traefik/docker-compose.override.y
 Set in `.env`:
 
 ```
-TRUSTED_PROXIES=172.16.0.0/12
+# Replace this example with the exact CIDR reported for the Compose proxy network.
+TRUSTED_PROXIES=172.20.0.0/24
 API_BASE_URL=https://api.example.com
+APP_BASE_URL=https://app.example.com
 ```
 
-Use the Docker network CIDR as trusted proxy range when Traefik runs in the same Docker network.
+Use the exact Docker network CIDR as the trusted proxy range when Traefik runs in the same Docker network; do not leave a broad private range trusted. A read-only bind mount makes the socket file read-only but does not restrict Docker API calls. Treat direct Docker-socket access as host-sensitive and prefer a restricted socket proxy or another provider integration.
 
 ## API
 
@@ -578,7 +612,7 @@ Base URL: `https://api.example.com`
 | `/v1/user/password` | PUT | Yes | Change password |
 | `/v1/devices` | GET/POST | Yes | List / register devices |
 | `/v1/devices/{id}` | DELETE | Yes | Remove device |
-| `/v1/user/avatar` | PUT | Yes | Update avatar (base64, max 512 KB) |
+| `/v1/user/avatar` | PUT | Yes | Update avatar (Base64 text max 512 KiB; decoded image max 256 KiB) |
 | `/v1/user/avatar` | DELETE | Yes | Delete avatar |
 | `/v1/audit` | GET | Yes | User activity log |
 | `/v1/attestation` | GET | No | Server attestation (Ed25519 signed) |
@@ -590,13 +624,13 @@ Registration returns HTTP `202` with exactly:
 {"status":"If registration is available, check your email to verify your account."}
 ```
 
-New, existing, and soft-deleted addresses receive the same response. Registration returns no account identifiers or access/refresh tokens. Each valid signup attempt performs the same expensive password hashing before account-existence checks, then discards that hash. The signup password never becomes credentials. New accounts have cryptographically random, unusable password values until the mailbox owner chooses a password during activation. Login before activation returns HTTP `401` with `{"error":"invalid credentials"}`; protected access for a new unverified account returns `403` with `{"error":"verification_required"}`.
+New, existing, and soft-deleted addresses receive the same response. Registration returns no account identifiers or access/refresh tokens. Each valid signup attempt performs the same expensive password hashing before account-existence checks, then discards that hash. The signup password never becomes credentials. New accounts have cryptographically random, unusable password values until the mailbox owner chooses a password during activation. Login before activation returns HTTP `401` with `{"error":"invalid credentials"}`; protected access with an otherwise valid token for a new unverified account returns `403` with `{"error":"verification_required"}`.
 
-The verification email links to `GET /v1/auth/verify-email?token=...`, a non-mutating password-entry form. Opening or scanning the link does not activate the account or consume the token. Submit the form or call `POST /v1/auth/verify-email` with `{"token":"...","new_password":"your-chosen-password"}` (8�256 bytes). The single-use POST atomically verifies the mailbox and installs the owner's chosen password for a new account, independent of every password previously submitted at registration. A link from an earlier signup request is safe to use with your own password. Existing grandfathered verification links only mark the address verified and preserve existing credentials. Links expire after 24 hours; activation does not return session tokens, so sign in afterwards.
+The verification email links to `GET /v1/auth/verify-email?token=...`, a non-mutating password-entry form. Opening or scanning the link does not activate the account or consume the token. Submit the form or call `POST /v1/auth/verify-email` with `{"token":"...","new_password":"your-chosen-password"}` (8–256 bytes). The single-use POST atomically verifies the mailbox and installs the owner's chosen password for a new account, independent of every password previously submitted at registration. A link from an earlier signup request is safe to use with your own password. Existing grandfathered verification links only mark the address verified and preserve existing credentials. Links expire after 24 hours; activation does not return session tokens, so sign in afterwards.
 
 Verification, recovery, and email-change delivery each have a database-enforced 60-second cooldown per normalized recipient and purpose, shared across clients, IPs, and server processes. Only a recipient digest is stored in the budget table. At most one unused token exists per account and purpose. A throttled signup keeps the same opaque response, sends no mail, and preserves the existing viable link. Only an admitted resend after the cooldown replaces it.
 
-SMTP runs through a bounded queue (128 messages, two workers), so SMTP latency never blocks registration responses. Queue saturation and delivery failure preserve registration's opaque result; retry after the cooldown. Mail draining shares the single process shutdown deadline; SMTP observes cancellation and separate connection, command-I/O, and overall deadlines. Configured SMTP requires certificate-verified TLS 1.2 or newer: port 465 uses implicit TLS, and other ports require STARTTLS. No credentials or message content are sent before TLS succeeds. If SMTP credentials are configured, missing or rejected AUTH fails delivery; plaintext fallback is never used. Trusted certificates must match `SMTP_HOST`.
+SMTP runs through a bounded queue (128 messages, two workers), so SMTP latency never blocks registration responses. Queue saturation and delivery failure preserve registration's opaque result; retry after the cooldown. Mail draining shares the single process shutdown deadline; SMTP observes cancellation and separate connection, command-I/O, and overall deadlines. Configured SMTP requires certificate-verified TLS 1.2 or newer: port 465 uses implicit TLS, and other ports require STARTTLS. No credentials or message content are sent before TLS succeeds. If SMTP credentials are configured, missing or rejected AUTH fails delivery; plaintext fallback is never used. Trusted certificates must match `SMTP_HOST`. Without `SMTP_HOST`, the development fallback logs the entire email, including activation and recovery links; do not use that mode on a production or shared system.
 
 HTTP JSON errors and other JSON responses up to 64 KiB are padded to 1 KiB boundaries and remain uncompressed, including early `400`, `413`, and `429` rejections. CORS and security headers wrap these rejection paths. Opaque vault/history blobs stream as JSON with optional gzip; they are not padded. Larger general responses also bypass buffering after 64 KiB. Existing vaults above 15 MiB remain readable, exportable, and available in history; only new/replacement writes (including client imports through the write endpoint) use the 15 MiB ceiling. Requests must contain exactly one JSON value. Configure proxy request limits to **21,037,056 bytes** for the default Base64 JSON envelope; a decoded blob of 15,728,641 bytes returns `413` even when its wire body fits.
 
@@ -617,7 +651,7 @@ PoW difficulty increases only for accepted work. Verification enforces both the 
 
 To change email, send `PUT /v1/user` with `{"email":"new@example.com","current_password":"your-current-password"}`. A successful request returns HTTP `202` and `{"status":"pending_confirmation"}`. The old address remains active for login and password recovery, and keeps its verified state. The profile exposes `pending_email` until confirmation. The email sent to the pending address links to `GET /v1/auth/confirm-email-change?token=...`, a non-mutating preview page. The token is valid for one hour. The user must submit the confirmation form, or call `POST /v1/auth/confirm-email-change` with `{"token":"..."}`. GETs, including mail-scanner visits, never consume the token. The explicit POST installs and verifies the new address, clears the pending value, revokes every access/refresh session and obsolete email/reset token, and requires a fresh login. Replacing a pending request invalidates its previous confirmation link. Changing or resetting the password cancels pending email changes and unconfirmed signup links. Requests that keep the existing email, empty profile updates, and avatar updates retain their existing response shape.
 
-Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
+The interactive documentation is served at `/docs/`. The complete OpenAPI 3.1 contract is [`api/openapi.yaml`](api/openapi.yaml); CI validates its syntax and all 30 registered HTTP method/path pairs.
 
 ## Configuration
 
@@ -635,13 +669,14 @@ Key environment variables:
 | `SERVER_IDLE_TIMEOUT` | No | `30s` | Idle keep-alive timeout |
 | `SERVER_SHUTDOWN_TIMEOUT` | No | `30s` | Single total shutdown budget |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `POSTGRES_PASSWORD` | Yes | — | PostgreSQL password (Docker Compose) |
+| `DATABASE_PASSWORD` | Native process | — | Raw password inserted into `DATABASE_URL` with safe URL encoding |
+| `POSTGRES_PASSWORD` | Docker Compose | — | PostgreSQL password injected into the Compose database URL |
 | `HOST_PORT` | No | `127.0.0.1:8080` | Host-side port mapping for Docker Compose |
 | `SERVER_ADDR` | No | `127.0.0.1:8080` | Bind address (`0.0.0.0:8080` for Docker) |
 | `SERVER_ENV` | No | `production` | `production` or `development` |
 | `SERVER_ID` | No | `sshvault-primary` | Server identity for attestation |
-| `APP_BASE_URL` | No | `https://app.example.com` | Frontend URL (for emails, redirects) |
-| `API_BASE_URL` | No | `https://api.example.com` | Public API URL |
+| `APP_BASE_URL` | No | `https://app.sshvault.app` | Frontend URL (for emails, redirects) |
+| `API_BASE_URL` | No | `https://api.sshvault.app` | Public API URL |
 | `TRUSTED_PROXIES` | No | `127.0.0.1/8,::1/128` | CIDR ranges of trusted reverse proxies |
 | `CORS_ORIGINS` | No | — | Comma-separated allowed origins |
 | **Auth** | | | |
@@ -649,20 +684,20 @@ Key environment variables:
 | `JWT_ACCESS_TTL` | No | `15m` | Access token lifetime |
 | `JWT_REFRESH_TTL` | No | `720h` | Refresh token lifetime |
 | **Mail** | | | |
-| `SMTP_HOST` | No | — | Enables email sending when set |
+| `SMTP_HOST` | Production | — | SMTP server; empty uses the development fallback that logs complete messages and one-time links |
 | `SMTP_PORT` | No | `587` | `465` uses implicit TLS; all other ports require STARTTLS |
 | `SMTP_USER` | No | — | SMTP username |
 | `SMTP_PASS` | No | — | SMTP password |
 | `SMTP_CONNECT_TIMEOUT` | No | `10s` | Connection deadline |
 | `SMTP_COMMAND_TIMEOUT` | No | `10s` | Deadline for each SMTP read/write operation |
 | `SMTP_DELIVERY_TIMEOUT` | No | `30s` | Overall delivery deadline including connection |
-| `SMTP_FROM` | No | `noreply@example.com` | Sender address |
+| `SMTP_FROM` | No | `noreply@sshvault.app` | Sender address |
 | **Vault** | | | |
 | `VAULT_MAX_SIZE_MB` | No | `15` | Decoded write limit in MiB; may be reduced, never raised above 15 |
 | `VAULT_HISTORY_LIMIT` | No | `10` | Maximum stored vault versions |
 | **Rate Limiting** | | | |
-| `RATE_LIMIT_RPS` | No | `10` | Requests per second (global) |
-| `RATE_LIMIT_BURST` | No | `20` | Burst capacity |
+| `RATE_LIMIT_RPS` | No | `10` | Requests per second for each client-IP bucket |
+| `RATE_LIMIT_BURST` | No | `20` | Burst capacity for each client-IP bucket |
 | **Backup** | | | |
 | `BACKUP_DIR` | No | `./backups` | Backup directory path |
 | `BACKUP_INTERVAL` | No | `24h` | Auto-backup interval |
@@ -680,8 +715,8 @@ Key environment variables:
 ## Self-Hosted
 
 For self-hosted instances:
-- Leave `SMTP_HOST` empty to deliver email bodies through stdout. Activation and password-reset links are included, so restrict access to these logs and configure SMTP for internet-facing installations.
-- All data remains encrypted — the server cannot read vault contents
+- Configure `SMTP_HOST` before enabling registration, email changes, or password recovery. Leaving it empty logs complete email bodies and one-time links and is suitable only for isolated development.
+- Vault payloads remain client-side encrypted; the server cannot read their plaintext
 - Set `TRUSTED_PROXIES` to match your reverse proxy's IP/network
 - **Never expose port 8080 directly to the internet** — always use a reverse proxy with TLS
 
@@ -689,8 +724,8 @@ For self-hosted instances:
 
 ### Zero-Knowledge Privacy
 
-- **No plaintext IPs** stored in the database or log files
-- Brute-force protection uses SHA-256 hashed IPs (irreversible)
+- **No plaintext IPs** stored by the SSHVault application or its audit log; reverse-proxy access logs are configured separately
+- Brute-force protection stores deterministic SHA-256 hashes of IPs instead of plaintext; these hashes are pseudonymous and can be enumerable for small address spaces
 - Device sync tracking stores timestamps only, no network metadata
 - Audit logs contain no IP addresses
 - All vault data is encrypted client-side — server stores only opaque blobs
@@ -700,27 +735,27 @@ For self-hosted instances:
 - Binds to `127.0.0.1:8080` by default (not reachable from outside)
 - Trusted proxy validation — `X-Forwarded-For` only accepted from configured CIDRs
 - Aggressive timeouts: 2s header read, 120s body read, 180s write, 30s idle
-- Vault uploads accept exactly 15 MiB (15,728,640 bytes) of decoded data at the default limit (20 MiB Base64 plus 64 KiB JSON envelope; 21,037,056 bytes on the wire); other request bodies remain limited to 10 MiB, headers to 1 MiB
-- Docker containers: `read_only`, `no-new-privileges`, non-root user
+- Vault uploads accept up to 15 MiB (15,728,640 bytes) of decoded data at the default limit (20 MiB Base64 plus 64 KiB JSON envelope; 21,037,056 bytes on the wire); other request bodies remain limited to 10 MiB, headers to 1 MiB
+- Server and backup containers: `read_only`, `no-new-privileges`, non-root user
 - PostgreSQL port not exposed to host
 
 ### Cryptography
 
-- Passwords: Argon2id (64 MB, 3 iterations, parallelism 4)
+- Passwords: Argon2id (256 MiB, 3 iterations, parallelism 1); legacy 64 MiB/3/4 hashes remain verifiable
 - JWT: Ed25519 signatures (no shared HMAC secrets)
 - Refresh tokens: SHA-256 hashed in database
 
 ### Protection
 
-- Rate limiting: 10 req/s global, 5 req/min on auth endpoints
-- Brute force protection: account lockout after 5 failures, IP block after 20
+- Rate limiting: 10 req/s per client IP, 5 req/min per client IP on auth endpoints
+- Brute force protection: each admitted login attempt is reserved before password verification; five account attempts or twenty client-IP attempts within 15 minutes stop further admission
 - All queries parameterized (no SQL injection)
 - Soft delete + 30-day purge for account deletion
 
 ### HTTP Headers
 
 - `Strict-Transport-Security` with 2-year max-age and preload
-- `Content-Security-Policy: default-src 'none'`
+- `Content-Security-Policy: default-src 'none'` for API responses; `/docs` uses a separate Swagger UI policy
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
 - `Cross-Origin-Resource-Policy: same-origin`
