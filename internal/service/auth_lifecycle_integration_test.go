@@ -153,6 +153,10 @@ func TestLifecycleConfirmationAtomicAndSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mail.verification = "obsolete-verification"
+	if err = verify.Create(ctx, &repository.VerificationToken{UserID: response.User.ID, TokenHash: auth.HashToken(mail.verification), Kind: repository.TokenKindEmailVerify, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = us.UpdateProfile(ctx, response.User.ID, &UpdateProfileRequest{Email: " NEW@example.com ", CurrentPassword: "password123"}); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +308,7 @@ func TestLifecyclePendingTokenReplacementExpiryAndConflict(t *testing.T) {
 	us := NewUserService(users, tokens, tx, verify, mail)
 	request := func(email string) string {
 		t.Helper()
+		testutil.Exec(t, p, "UPDATE mail_send_budgets SET next_send_at=NOW()-interval '1 second'")
 		if _, err := us.UpdateProfile(ctx, u.ID, &UpdateProfileRequest{Email: email, CurrentPassword: "password123"}); err != nil {
 			t.Fatal(err)
 		}
@@ -428,7 +433,7 @@ func TestLifecyclePendingIssuanceRollback(t *testing.T) {
 		t.Fatal("failed issuance installed pending state or delivered a token")
 	}
 }
-func TestLifecycleRegistrationResendPreservesPassword(t *testing.T) {
+func TestLifecycleVerifiedRegistrationPreservesPassword(t *testing.T) {
 	p := authDatabase(t)
 	ctx := context.Background()
 	users := repository.NewUserRepository(p)
@@ -437,16 +442,15 @@ func TestLifecycleRegistrationResendPreservesPassword(t *testing.T) {
 	if _, err := svc.Register(ctx, &RegisterRequest{Email: "new@example.com", Password: "original-password"}); err != nil {
 		t.Fatal(err)
 	}
-	first := mail.verification
+	if err := svc.VerifyEmail(ctx, mail.verification); err != nil {
+		t.Fatal(err)
+	}
 	mail.verification = ""
 	if _, err := svc.Register(ctx, &RegisterRequest{Email: "new@example.com", Password: "attacker-password"}); err != nil {
 		t.Fatal(err)
 	}
-	if mail.verification == "" || mail.verification == first {
-		t.Fatal("unverified account cannot request another verification link")
-	}
-	if err := svc.VerifyEmail(ctx, mail.verification); err != nil {
-		t.Fatal(err)
+	if mail.verification != "" {
+		t.Fatal("verified account received a new signup link")
 	}
 	if _, err := svc.Login(ctx, &LoginRequest{Email: "new@example.com", Password: "original-password"}); err != nil {
 		t.Fatal(err)

@@ -428,7 +428,7 @@ func TestIntegrationVerificationRollback(t *testing.T) {
 	if err := users.Create(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	if err := verify.Create(ctx, &repository.VerificationToken{UserID: u.ID, TokenHash: auth.HashToken("verify"), Kind: repository.TokenKindEmailVerify, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if err := verify.Create(ctx, &repository.VerificationToken{UserID: u.ID, TokenHash: auth.HashToken("verify"), Kind: repository.TokenKindEmailVerify, RegistrationPasswordHash: "bound-hash", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	svc := NewAuthService(failVerifyUsers{users}, tokens, verify, tx, newTestJWT(t), nil, nil)
@@ -581,4 +581,8 @@ func TestIntegrationRegistrationCannotIssueForChangedEmail(t *testing.T) {
 	if active != 0 {
 		t.Fatalf("%d registration links issued for obsolete mailbox", active)
 	}
+}
+
+func (r failVerifyUsers) ActivateRegistration(context.Context, uuid.UUID, string, string) error {
+	return errors.New("injected verification failure")
 }

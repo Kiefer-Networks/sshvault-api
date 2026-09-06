@@ -102,6 +102,13 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 			if current == nil || current.Password != user.Password || current.SessionVersion != user.SessionVersion || current.Email != user.Email {
 				return fmt.Errorf("credentials changed; please sign in again")
 			}
+			admitted, err := s.verifyRepo.ReserveMailSend(txCtx, mailRecipientDigest(req.Email), repository.TokenKindEmailChange)
+			if err != nil {
+				return err
+			}
+			if !admitted {
+				return fmt.Errorf("email change temporarily unavailable; retry after one minute")
+			}
 			if err = s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindEmailChange); err != nil {
 				return err
 			}

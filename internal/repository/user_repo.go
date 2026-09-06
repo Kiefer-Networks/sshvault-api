@@ -18,6 +18,7 @@ type UserRepository interface {
 	ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error
 	UpdateEmail(ctx context.Context, id uuid.UUID, email string) error
 	UpdateAvatar(ctx context.Context, id uuid.UUID, avatar string) error
+	ActivateRegistration(ctx context.Context, id uuid.UUID, email, passwordHash string) error
 	MarkVerified(ctx context.Context, id uuid.UUID, email string) error
 	UpdatePassword(ctx context.Context, id uuid.UUID, expectedPassword, password string) error
 	RevokeSessions(ctx context.Context, id uuid.UUID) error

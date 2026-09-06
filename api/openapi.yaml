@@ -101,7 +101,7 @@ paths:
     post:
       tags: [Auth]
       summary: Register new account
-      description: Requires a solved PoW challenge. Always returns the same opaque acceptance for new, existing, and deleted addresses. New accounts must verify before login. Repeating registration resends verification for a new unverified account without changing its password.
+      description: Requires a solved PoW challenge. Always returns the same opaque acceptance for new, existing, and deleted addresses. New accounts must verify before login. Each signup attempt hashes its submitted password before checking existence. For new unverified accounts, verification installs only the password hash bound to that specific attempt. Later attempts invalidate prior links. Delivery is queued with a 60-second per-recipient, per-purpose cooldown; retry after one minute if a resend is throttled.
       operationId: register
       parameters:
         - $ref: "#/components/parameters/PowChallenge"
@@ -243,6 +243,7 @@ paths:
     get:
       tags: [Auth]
       summary: Verify email address
+      description: For a new account, consumes the current signup token and atomically installs only its bound password hash. Superseded links are invalid. Existing grandfathered verification links preserve the existing password.
       operationId: verifyEmail
       parameters:
         - name: token
@@ -271,15 +272,47 @@ paths:
   /v1/auth/confirm-email-change:
     get:
       tags: [Auth]
-      summary: Confirm a pending email change
-      description: Consumes a purpose-specific one-hour token once. Atomically installs and verifies the pending address, clears pending_email, revokes all sessions and obsolete email/reset tokens. Sign in again afterward. Password changes and resets cancel pending changes.
-      operationId: confirmEmailChange
+      summary: Preview a pending email change
+      description: Non-mutating HTML landing page with an explicit confirmation form. Merely opening or scanning the link does not consume any token or change account/session state.
+      operationId: previewEmailChange
       parameters:
         - name: token
           in: query
           required: true
           schema:
             type: string
+      responses:
+        "200":
+          description: Confirmation form; no account mutation
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          description: Missing token
+    post:
+      tags: [Auth]
+      summary: Confirm a pending email change
+      description: Consumes a purpose-specific one-hour token once. Atomically installs and verifies the pending address, clears pending_email, revokes all sessions and obsolete email/reset tokens. Sign in again afterward. Password changes and resets cancel pending changes.
+      operationId: confirmEmailChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              additionalProperties: false
+              properties:
+                token:
+                  type: string
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
       responses:
         "200":
           description: Email changed; sign in again
@@ -485,7 +518,7 @@ paths:
                     type: string
                     const: pending_confirmation
         "400":
-          description: Invalid email, current password, or unavailable email change
+          description: Invalid email, current password, unavailable email change, or recipient cooldown (retry after one minute)
         "200":
           content:
             application/json:

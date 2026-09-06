@@ -170,13 +170,18 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return nil, err
 	}
 
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("hashing password: %w", err)
+	}
+
 	existing, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, fmt.Errorf("checking existing user: %w", err)
 	}
 	if existing != nil {
 		if !existing.Verified && !existing.VerificationGrandfathered {
-			s.sendRegistrationVerification(ctx, existing, req.Email)
+			s.sendRegistrationVerification(ctx, existing, req.Email, hash)
 		}
 		return registrationAccepted(), nil
 	}
@@ -190,20 +195,18 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return registrationAccepted(), nil
 	}
 
-	hash, err := auth.HashPassword(req.Password)
-	if err != nil {
-		return nil, fmt.Errorf("hashing password: %w", err)
-	}
-
 	user := &model.User{
 		Email:    req.Email,
-		Password: hash,
+		Password: "!unverified",
 		Verified: false,
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if current, lookupErr := s.userRepo.GetByEmail(ctx, req.Email); lookupErr == nil && current != nil {
+				s.sendRegistrationVerification(ctx, current, req.Email, hash)
+			}
 			return registrationAccepted(), nil
 		}
 		return nil, fmt.Errorf("creating user: %w", err)
@@ -211,11 +214,11 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 
 	log.Info().Str("email", maskEmail(req.Email)).Str("user_id", user.ID.String()).Msg("user registered")
 
-	s.sendRegistrationVerification(ctx, user, req.Email)
+	s.sendRegistrationVerification(ctx, user, req.Email, hash)
 	return registrationAccepted(), nil
 }
 
-func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *model.User, email string) {
+func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *model.User, email, passwordHash string) {
 	if s.mailer != nil {
 		rawToken := uuid.New().String()
 		hash := auth.HashToken(rawToken)
@@ -226,14 +229,27 @@ func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *mo
 			if err != nil {
 				return err
 			}
-			if current == nil || current.Email != email || current.Verified || current.VerificationGrandfathered {
+			if current == nil || current.Email != email || current.Verified || current.VerificationGrandfathered || current.SessionVersion != user.SessionVersion {
 				return nil
 			}
+			// Serializing the attempt version also rejects delayed issuance from older snapshots.
+			if err := s.userRepo.RevokeSessions(txCtx, user.ID); err != nil {
+				return err
+			}
+			// Every later signup supersedes older links, even when delivery is throttled.
+			if err := s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindEmailVerify); err != nil {
+				return err
+			}
+			admitted, err := s.verifyRepo.ReserveMailSend(txCtx, mailRecipientDigest(email), repository.TokenKindEmailVerify)
+			if err != nil || !admitted {
+				return err
+			}
 			token := &repository.VerificationToken{
-				UserID:    user.ID,
-				TokenHash: hash,
-				Kind:      repository.TokenKindEmailVerify,
-				ExpiresAt: time.Now().Add(24 * time.Hour),
+				RegistrationPasswordHash: passwordHash,
+				UserID:                   user.ID,
+				TokenHash:                hash,
+				Kind:                     repository.TokenKindEmailVerify,
+				ExpiresAt:                time.Now().Add(24 * time.Hour),
 			}
 			if err := s.verifyRepo.Create(txCtx, token); err != nil {
 				return err
@@ -292,7 +308,17 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	valid, err := auth.VerifyPassword(req.Password, user.Password)
+	passwordHash := user.Password
+	if !user.Verified && !user.VerificationGrandfathered {
+		pending, err := s.verifyRepo.PendingRegistrationPassword(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		if pending != "" {
+			passwordHash = pending
+		}
+	}
+	valid, err := auth.VerifyPassword(req.Password, passwordHash)
 	if err != nil || !valid {
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
@@ -381,7 +407,15 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 		if token == nil {
 			return fmt.Errorf("invalid or expired verification token")
 		}
-		if err = s.userRepo.MarkVerified(txCtx, user.ID, user.Email); err != nil {
+		if !user.Verified && !user.VerificationGrandfathered {
+			if token.RegistrationPasswordHash == "" {
+				return fmt.Errorf("invalid registration verification token")
+			}
+			err = s.userRepo.ActivateRegistration(txCtx, user.ID, user.Email, token.RegistrationPasswordHash)
+		} else {
+			err = s.userRepo.MarkVerified(txCtx, user.ID, user.Email)
+		}
+		if err != nil {
 			return fmt.Errorf("updating user: %w", err)
 		}
 		return nil
@@ -406,6 +440,10 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 		}
 		if current == nil || current.Email != email {
 			return nil
+		}
+		admitted, err := s.verifyRepo.ReserveMailSend(txCtx, mailRecipientDigest(email), repository.TokenKindPasswordReset)
+		if err != nil || !admitted {
+			return err
 		}
 		if err = s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindPasswordReset); err != nil {
 			return fmt.Errorf("revoking reset tokens: %w", err)
@@ -482,4 +520,8 @@ func (s *AuthService) LogoutAll(ctx context.Context, userID uuid.UUID) error {
 		}
 		return s.tokenRepo.RevokeAllForUser(txCtx, userID)
 	})
+}
+
+func mailRecipientDigest(email string) string {
+	return auth.HashToken("mail-recipient:" + NormalizeEmail(email))
 }

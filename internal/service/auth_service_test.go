@@ -247,16 +247,15 @@ func TestRegisterInvalidEmail(t *testing.T) {
 
 func registerVerified(t *testing.T, svc *AuthService, ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
 	t.Helper()
-	if _, err := svc.Register(ctx, req); err != nil {
-		return nil, err
-	}
-	u, err := svc.userRepo.GetByEmail(ctx, req.Email)
+	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		return nil, err
 	}
-	if err = svc.userRepo.MarkVerified(ctx, u.ID, u.Email); err != nil {
+	user := &model.User{Email: NormalizeEmail(req.Email), Password: hash, Verified: true}
+	if err = svc.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
+
 	return svc.Login(ctx, &LoginRequest{Email: req.Email, Password: req.Password})
 }
 
@@ -596,3 +595,26 @@ func (m *mockUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.UUID, em
 }
 
 func (m *mockMailer) SendEmailChangeEmail(context.Context, string, string) error { return nil }
+
+func (m *mockUserRepo) ActivateRegistration(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Password = passwordHash
+	u.Verified = true
+	u.SessionVersion++
+	return nil
+}
+
+func (m *mockVerifyRepo) ReserveMailSend(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+func (m *mockVerifyRepo) PendingRegistrationPassword(_ context.Context, id uuid.UUID) (string, error) {
+	for _, token := range m.tokens {
+		if token.UserID == id && token.Kind == repository.TokenKindEmailVerify && !token.Used {
+			return token.RegistrationPasswordHash, nil
+		}
+	}
+	return "", nil
+}

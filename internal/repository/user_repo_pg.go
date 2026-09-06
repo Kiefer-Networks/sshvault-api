@@ -158,7 +158,7 @@ func (r *pgUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, expectedP
 		if err := r.updateFields(txCtx, `UPDATE users SET password=$3,pending_email='',session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND password=$2 AND deleted_at IS NULL`, id, expectedPassword, password); err != nil {
 			return err
 		}
-		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE verification_tokens SET used=TRUE WHERE user_id=$1 AND kind=$2 AND NOT used`, id, TokenKindEmailChange)
+		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE verification_tokens SET used=TRUE WHERE user_id=$1 AND kind IN ($2,$3) AND NOT used`, id, TokenKindEmailChange, TokenKindEmailVerify)
 		return err
 	})
 }
@@ -259,4 +259,9 @@ func (r *pgUserRepo) SetPendingEmail(ctx context.Context, id uuid.UUID, email st
 }
 func (r *pgUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
 	return r.updateFields(ctx, `UPDATE users SET email=$2,pending_email='',verified=TRUE,session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND pending_email=$2 AND pending_email<>'' AND deleted_at IS NULL`, id, email)
+}
+
+func (r *pgUserRepo) ActivateRegistration(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
+	return r.updateFields(ctx, `UPDATE users SET password=$3,verified=TRUE,session_version=session_version+1,updated_at=NOW()
+ WHERE id=$1 AND email=$2 AND NOT verified AND NOT verification_grandfathered AND deleted_at IS NULL`, id, email, passwordHash)
 }

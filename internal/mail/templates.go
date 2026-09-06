@@ -51,7 +51,7 @@ func PasswordResetEmailBody(appBaseURL, token string) string {
 func EmailChangeBody(apiBaseURL, token string) string {
 	return fmt.Sprintf(`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>
  <h2>Confirm your SSHVault email change</h2>
- <p>Confirm this address within one hour. Your current email remains active until confirmation. Confirmation signs you out of all devices.</p>
+ <p>Review this change within one hour, then press Confirm on the page. Opening this link does not change your account. Your current email remains active until confirmation, which signs you out of all devices.</p>
  <p><a href="%s/v1/auth/confirm-email-change?token=%s">Confirm email change</a></p>
  <p>If you did not request this change, ignore this email.</p>
  </body></html>`, apiBaseURL, token)

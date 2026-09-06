@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -131,7 +129,7 @@ func main() {
 	} else {
 		mailer = mail.NewNoopMailer()
 	}
-	mailService := service.NewMailService(mailer, cfg.Server.AppBaseURL, cfg.Server.APIBaseURL)
+	mailService := service.NewMailDispatcher(service.NewMailService(mailer, cfg.Server.AppBaseURL, cfg.Server.APIBaseURL), 128, 2)
 
 	// Audit logger (async, buffered)
 	auditRepo := audit.NewRepository(pool)
@@ -268,17 +266,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(mw.TrustedRealIP(cfg.Server.TrustedProxies))
-	r.Use(mw.RequestID)
-	r.Use(mw.RequestLogger)
-	r.Use(mw.SecurityHeaders)
-	r.Use(mw.RecoverPanic)
-	r.Use(rateLimiter.Limit)
-	r.Use(mw.APIBodyLimit(int64(cfg.Vault.MaxSizeMB) * 1024 * 1024))
-	r.Use(cors.Handler(mw.CORSOptions(cfg.Server.CORSOrigins)))
-	r.Use(chimiddleware.Compress(5))
-	r.Use(mw.ResponsePadding)
-	r.Use(mw.RequireJSONContentType)
+	productionGlobalMiddleware(r, cfg, rateLimiter)
 
 	// System routes
 	r.Get("/health", healthHandler.Health)
@@ -332,7 +320,7 @@ func main() {
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
 			r.Get("/verify-email", authHandler.VerifyEmail)
-			r.Get("/confirm-email-change", userHandler.ConfirmEmailChange)
+			registerEmailChangeRoutes(r, userHandler)
 			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)
 		})
@@ -382,6 +370,11 @@ func main() {
 	shutdownCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
 	cleanup := func() {
+		mailStopCtx, mailStopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := mailService.Stop(mailStopCtx); err != nil {
+			log.Warn().Msg("mail delivery stopped at shutdown deadline")
+		}
+		mailStopCancel()
 		// Stop background goroutines and wait for them to finish
 		bgCancel()
 		bgWg.Wait()

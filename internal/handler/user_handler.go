@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/base64"
+	"html/template"
 	"net/http"
 	"strings"
 
@@ -200,13 +201,49 @@ func (h *UserHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "avatar deleted"})
 }
 
-func (h *UserHandler) ConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
+var emailChangePreview = template.Must(template.New("email-change").Parse(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Confirm email change</title></head><body>
+<h1>Confirm your email change</h1><p>Confirming changes your recovery address and signs you out of all devices.</p>
+<form action="/v1/auth/confirm-email-change" method="post"><input type="hidden" name="token" value="{{.}}"><button type="submit">Confirm email change</button></form>
+<p>If you did not request this change, close this page.</p></body></html>`))
+
+// PreviewEmailChange never consumes a token; link scanners cannot change account state.
+func (h *UserHandler) PreviewEmailChange(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		respondError(w, http.StatusBadRequest, "token is required")
 		return
 	}
-	if err := h.userService.ConfirmEmailChange(r.Context(), token); err != nil {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	_ = emailChangePreview.Execute(w, token)
+}
+func (h *UserHandler) ConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		respondError(w, http.StatusMethodNotAllowed, "POST is required")
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		req.Token = r.PostForm.Get("token")
+	} else if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Token == "" {
+		respondError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+	if err := h.userService.ConfirmEmailChange(r.Context(), req.Token); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid or expired email change token")
 		return
 	}

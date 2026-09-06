@@ -502,3 +502,14 @@ func (m *userSvcMockUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.U
 	u.SessionVersion++
 	return nil
 }
+
+func (m *userSvcMockUserRepo) ActivateRegistration(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Password = passwordHash
+	u.Verified = true
+	u.SessionVersion++
+	return nil
+}

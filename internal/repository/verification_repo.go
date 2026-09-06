@@ -14,16 +14,19 @@ const (
 )
 
 type VerificationToken struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	TokenHash string
-	Kind      string
-	ExpiresAt time.Time
-	Used      bool
-	CreatedAt time.Time
+	RegistrationPasswordHash string
+	ID                       uuid.UUID
+	UserID                   uuid.UUID
+	TokenHash                string
+	Kind                     string
+	ExpiresAt                time.Time
+	Used                     bool
+	CreatedAt                time.Time
 }
 
 type VerificationRepository interface {
+	ReserveMailSend(ctx context.Context, recipientDigest, purpose string) (bool, error)
+	PendingRegistrationPassword(ctx context.Context, userID uuid.UUID) (string, error)
 	Create(ctx context.Context, token *VerificationToken) error
 	GetByHash(ctx context.Context, tokenHash, kind string) (*VerificationToken, error)
 	// ConsumeVerificationToken atomically marks a valid token as used and returns it.
