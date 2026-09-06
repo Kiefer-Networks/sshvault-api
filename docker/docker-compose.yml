@@ -11,6 +11,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      DATABASE_URL: postgres://sshvault@postgres:5432/sshvault?sslmode=disable
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       LOG_FILE_PATH: /app/logs/sshvault.log
       SERVER_ADDR: 0.0.0.0:8080
     volumes:
@@ -35,6 +37,8 @@ services:
     env_file:
       - ../.env
     environment:
+      DATABASE_URL: postgres://sshvault@postgres:5432/sshvault?sslmode=disable
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       BACKUP_DIR: /app/backups
       BACKUP_INTERVAL: "${BACKUP_INTERVAL:-24h}"
       BACKUP_RETENTION: "${BACKUP_RETENTION:-7}"
