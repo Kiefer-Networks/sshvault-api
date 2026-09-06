@@ -27,8 +27,8 @@ type PowSolution struct {
 
 // PowGuard validates proof-of-work solutions before allowing requests.
 type PowGuard struct {
-	mu            sync.Mutex
-	pending       map[string]PowChallenge // challenge → metadata
+	mu             sync.Mutex
+	pending        map[string]PowChallenge // challenge → metadata
 	baseDifficulty int
 	maxDifficulty  int
 	challengeTTL   time.Duration

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	TokenKindEmailVerify  = "email_verify"
+	TokenKindEmailVerify   = "email_verify"
 	TokenKindPasswordReset = "password_reset"
 )
 

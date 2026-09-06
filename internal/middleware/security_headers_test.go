@@ -8,17 +8,17 @@ import (
 
 func TestSecurityHeaders_AllHeadersSet(t *testing.T) {
 	expected := map[string]string{
-		"Strict-Transport-Security":   "max-age=63072000; includeSubDomains; preload",
-		"X-Content-Type-Options":      "nosniff",
-		"X-Frame-Options":             "DENY",
-		"X-XSS-Protection":            "0",
-		"Referrer-Policy":             "no-referrer",
-		"Content-Security-Policy":     "default-src 'none'; frame-ancestors 'none'",
-		"Permissions-Policy":          "camera=(), microphone=(), geolocation=(), browsing-topics=()",
-		"Cross-Origin-Opener-Policy":  "same-origin",
+		"Strict-Transport-Security":    "max-age=63072000; includeSubDomains; preload",
+		"X-Content-Type-Options":       "nosniff",
+		"X-Frame-Options":              "DENY",
+		"X-XSS-Protection":             "0",
+		"Referrer-Policy":              "no-referrer",
+		"Content-Security-Policy":      "default-src 'none'; frame-ancestors 'none'",
+		"Permissions-Policy":           "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+		"Cross-Origin-Opener-Policy":   "same-origin",
 		"Cross-Origin-Embedder-Policy": "require-corp",
 		"Cross-Origin-Resource-Policy": "same-origin",
-		"Cache-Control":               "no-store",
+		"Cache-Control":                "no-store",
 	}
 
 	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
