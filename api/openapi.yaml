@@ -328,6 +328,7 @@ paths:
     put:
       tags: [Vault]
       summary: Upload vault blob (optimistic locking)
+      description: The decoded vault blob may contain up to 75 MiB by default (configurable via VAULT_MAX_SIZE_MB). Base64 encoding adds overhead; the HTTP limit includes this plus 64 KiB for the JSON envelope.
       operationId: putVault
       security:
         - bearerAuth: []
@@ -362,6 +363,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConflictError"
+        "413":
+          description: Request exceeds the configured upload limit
 
   /v1/vault/history:
     get:

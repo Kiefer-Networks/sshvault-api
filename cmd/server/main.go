@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -289,7 +290,7 @@ func main() {
 	r.Use(mw.SecurityHeaders)
 	r.Use(mw.RecoverPanic)
 	r.Use(rateLimiter.Limit)
-	r.Use(mw.BodyLimit(10 * 1024 * 1024)) // 10 MB global limit
+	r.Use(mw.APIBodyLimit(int64(cfg.Vault.MaxSizeMB) * 1024 * 1024))
 	r.Use(cors.Handler(mw.CORSOptions(cfg.Server.CORSOrigins)))
 	r.Use(chimiddleware.Compress(5))
 	r.Use(mw.ResponsePadding)
@@ -386,20 +387,16 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           r,
-		ReadTimeout:       5 * time.Second,
+		ReadTimeout:       120 * time.Second,
 		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		WriteTimeout:      180 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
-	// Graceful shutdown
-	go func() {
-		quit := make(chan os.Signal, 1)
-		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-		sig := <-quit
-		log.Info().Str("signal", sig.String()).Msg("shutting down server")
-
+	shutdownCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	cleanup := func() {
 		// Stop background goroutines and wait for them to finish
 		bgCancel()
 		bgWg.Wait()
@@ -410,18 +407,18 @@ func main() {
 		auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActShutdown})
 		auditLogger.Stop()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Fatal().Err(err).Msg("server shutdown failed")
-		}
-	}()
+	}
+	listener, err := net.Listen("tcp", cfg.Server.Addr)
+	if err != nil {
+		cleanup()
+		log.Fatal().Err(err).Msg("failed to listen")
+	}
 
 	auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActStartup, Details: map[string]any{"addr": cfg.Server.Addr}})
 	log.Info().Str("addr", cfg.Server.Addr).Msg("server listening")
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal().Err(err).Msg("server failed")
+	if err := serveHTTP(shutdownCtx, srv, listener, cleanup); err != nil {
+		pool.Close()
+		log.Fatal().Err(err).Msg("server stopped with error")
 	}
 
 	log.Info().Msg("server stopped")
@@ -432,6 +429,7 @@ func runMigrations(databaseURL string) error {
 	if err != nil {
 		return fmt.Errorf("creating migrator: %w", err)
 	}
+	defer func() { _, _ = m.Close() }()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("running migrations: %w", err)

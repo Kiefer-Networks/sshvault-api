@@ -33,7 +33,7 @@ func (m *mockVaultRepo) GetByUserID(_ context.Context, _ uuid.UUID) (*model.Vaul
 	return m.vault, m.err
 }
 
-func (m *mockVaultRepo) Upsert(_ context.Context, v *model.Vault) error {
+func (m *mockVaultRepo) Create(_ context.Context, v *model.Vault) error {
 	m.vault = v
 	return m.err
 }

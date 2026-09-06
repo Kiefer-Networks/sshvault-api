@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -94,7 +95,18 @@ func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutV
 			Blob:     req.Blob,
 			Checksum: req.Checksum,
 		}
-		if err := s.vaultRepo.Upsert(ctx, vault); err != nil {
+		if err := s.vaultRepo.Create(ctx, vault); err != nil {
+			if errors.Is(err, repository.ErrVaultExists) {
+				current, lookupErr := s.vaultRepo.GetByUserID(ctx, userID)
+				if lookupErr != nil {
+					return nil, fmt.Errorf("getting concurrent vault: %w", lookupErr)
+				}
+				version := 1
+				if current != nil {
+					version = current.Version
+				}
+				return nil, &ConflictError{CurrentVersion: version, Message: "concurrent vault creation detected"}
+			}
 			return nil, fmt.Errorf("creating vault: %w", err)
 		}
 	} else {

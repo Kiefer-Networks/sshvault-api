@@ -38,23 +38,25 @@ func (r *pgVaultRepo) GetByUserID(ctx context.Context, userID uuid.UUID) (*model
 	return &vault, nil
 }
 
-func (r *pgVaultRepo) Upsert(ctx context.Context, vault *model.Vault) error {
+func (r *pgVaultRepo) Create(ctx context.Context, vault *model.Vault) error {
 	query := `
 		INSERT INTO vaults (id, user_id, version, blob, checksum, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (user_id) DO UPDATE
-		SET version = $3, blob = $4, checksum = $5, updated_at = $6`
+		ON CONFLICT (user_id) DO NOTHING`
 
 	if vault.ID == uuid.Nil {
 		vault.ID = uuid.New()
 	}
 	vault.UpdatedAt = time.Now()
 
-	_, err := r.pool.Exec(ctx, query,
+	result, err := conn(ctx, r.pool).Exec(ctx, query,
 		vault.ID, vault.UserID, vault.Version, vault.Blob,
 		vault.Checksum, vault.UpdatedAt)
 	if err != nil {
-		return fmt.Errorf("upserting vault: %w", err)
+		return fmt.Errorf("creating vault: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrVaultExists
 	}
 	return nil
 }

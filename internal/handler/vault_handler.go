@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -53,6 +54,11 @@ func (h *VaultHandler) PutVault(w http.ResponseWriter, r *http.Request) {
 
 	var req service.PutVaultRequest
 	if err := decodeJSON(r, &req); err != nil {
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			respondError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
