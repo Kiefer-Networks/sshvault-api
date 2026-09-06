@@ -16,8 +16,12 @@ BEGIN
         details = '{}'::jsonb
     WHERE actor_id = target_user_id
        OR (resource_type = 'user' AND resource_id = target_user_id::text)
-       OR actor_email = (SELECT email FROM users WHERE id = target_user_id)
-       OR details->>'email' = (SELECT email FROM users WHERE id = target_user_id);
+       -- Email addresses can be reused after an account changes its mailbox.
+       -- An explicit actor identity takes precedence over email-only matching.
+       OR (actor_id IS NULL AND (
+           actor_email = (SELECT email FROM users WHERE id = target_user_id)
+           OR details->>'email' = (SELECT email FROM users WHERE id = target_user_id)
+       ));
     GET DIAGNOSTICS affected = ROW_COUNT;
     ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_no_update;
     RETURN affected;

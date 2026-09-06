@@ -90,6 +90,49 @@ func TestPurgeDeletesOnlyExpiredAccountsAndAnonymizesAudit(t *testing.T) {
 	}
 }
 
+func TestPurgeEmailReusePreservesAnotherActorsAudit(t *testing.T) {
+	for _, field := range []string{"actor_email", "details_email"} {
+		t.Run(field, func(t *testing.T) {
+			p := testutil.Database(t, 0)
+			active := uuid.New()
+			identifiedLog, anonymousLog := uuid.New(), uuid.New()
+			testutil.Exec(t, p, `INSERT INTO users(id,email,password) VALUES($1,'old@example.com','test')`, active)
+			actorEmail, details := "old@example.com", `{"device":"private"}`
+			if field == "details_email" {
+				actorEmail, details = "", `{"email":"old@example.com","device":"private"}`
+			}
+			testutil.Exec(t, p, `INSERT INTO audit_logs(id,category,action,actor_id,actor_email,details) VALUES($1,'auth','login',$2,$3,$4::jsonb)`, identifiedLog, active, actorEmail, details)
+			// A changes their address; B subsequently registers the old address.
+			testutil.Exec(t, p, `UPDATE users SET email='new@example.com' WHERE id=$1`, active)
+			expired := seedPurgeUser(t, p, true)
+			testutil.Exec(t, p, `UPDATE users SET email='old@example.com' WHERE id=$1`, expired)
+			// Email-only legacy records must still be anonymized by the fallback.
+			testutil.Exec(t, p, `INSERT INTO audit_logs(id,category,action,actor_email,details) VALUES($1,'auth','login_failed',$2,$3::jsonb)`, anonymousLog, actorEmail, details)
+			ids, err := repository.NewUserRepository(p).PurgeDeleted(context.Background(), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ids) != 1 || ids[0] != expired {
+				t.Fatalf("deleted IDs=%v", ids)
+			}
+			var preserved int
+			if err := p.QueryRow(context.Background(), `SELECT count(*) FROM audit_logs a JOIN users u ON a.actor_id=u.id WHERE a.id=$1 AND u.id=$2 AND u.email='new@example.com' AND u.deleted_at IS NULL AND a.actor_email=$3 AND a.details=$4::jsonb`, identifiedLog, active, actorEmail, details).Scan(&preserved); err != nil {
+				t.Fatal(err)
+			}
+			if preserved != 1 {
+				t.Error("purging the new email owner altered the previous owner's identified audit record")
+			}
+			var anonymized int
+			if err := p.QueryRow(context.Background(), `SELECT count(*) FROM audit_logs WHERE id=$1 AND actor_id IS NULL AND actor_email='' AND details='{}'`, anonymousLog).Scan(&anonymized); err != nil {
+				t.Fatal(err)
+			}
+			if anonymized != 1 {
+				t.Error("email fallback did not anonymize the legacy record without actor identity")
+			}
+		})
+	}
+}
+
 func TestPurgeChildDeletionFailureRestoresAuditAndIdentity(t *testing.T) {
 	p := testutil.Database(t, 0)
 	uid := seedPurgeUser(t, p, true)
