@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -193,15 +192,9 @@ func userDeleteCmd() *cobra.Command {
 				}
 				fmt.Printf("User %s permanently deleted.\n", user.email)
 			} else {
-				_, err = pool.Exec(ctx,
-					`UPDATE users SET deleted_at = now() WHERE id = $1`, user.id)
+				_, err = updateUserSessions(ctx, user.id, "deactivate")
 				if err != nil {
 					return fmt.Errorf("soft delete: %w", err)
-				}
-				// Revoke all tokens
-				if _, err := pool.Exec(ctx,
-					`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`, user.id); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: failed to revoke tokens for %s: %v\n", user.email, err)
 				}
 				fmt.Printf("User %s soft-deleted. Data will be purged after 30 days.\n", user.email)
 			}
@@ -229,14 +222,9 @@ func userDeactivateCmd() *cobra.Command {
 				return nil
 			}
 
-			_, err = pool.Exec(ctx,
-				`UPDATE users SET deleted_at = now(), updated_at = now() WHERE id = $1`, user.id)
+			_, err = updateUserSessions(ctx, user.id, "deactivate")
 			if err != nil {
 				return fmt.Errorf("deactivate: %w", err)
-			}
-			if _, err := pool.Exec(ctx,
-				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`, user.id); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to revoke tokens for %s: %v\n", user.email, err)
 			}
 
 			fmt.Printf("User %s deactivated. All sessions revoked.\n", user.email)
@@ -274,8 +262,7 @@ func userActivateCmd() *cobra.Command {
 				return nil
 			}
 
-			_, err = pool.Exec(ctx,
-				`UPDATE users SET deleted_at = NULL, updated_at = now() WHERE id = $1`, id)
+			_, err = updateUserSessions(ctx, id, "activate")
 			if err != nil {
 				return fmt.Errorf("activate: %w", err)
 			}
@@ -298,14 +285,13 @@ func userLogoutCmd() *cobra.Command {
 				return err
 			}
 
-			result, err := pool.Exec(ctx,
-				`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE`, user.id)
+			count, err := updateUserSessions(ctx, user.id, "logout")
 			if err != nil {
 				return fmt.Errorf("revoking tokens: %w", err)
 			}
 
 			fmt.Printf("Revoked %d session(s) for %s. User remains active.\n",
-				result.RowsAffected(), user.email)
+				count, user.email)
 			return nil
 		},
 	}
