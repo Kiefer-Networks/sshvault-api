@@ -5,44 +5,100 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Check formatting
+        run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
+      - name: Validate workflows
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11 -color
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
-          version: v2.10.1
+          version: v2.13.2
+          args: --timeout=5m
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: sshvault
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: sshvault_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sshvault -d sshvault_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://sshvault:ci-only-password@localhost:5432/sshvault_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
+      - name: Install PostgreSQL 16 client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-client-16
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+      - name: Verify PostgreSQL client tools
+        run: |
+          pg_dump --version
+          psql --version
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'SELECT 1'
+      # Argon2 tests allocate 256 MiB per call; bound package and test parallelism.
+      - name: Unit and PostgreSQL integration tests with race detection
+        run: go test -v -race -p 1 -parallel 2 -count=1 -timeout=15m ./...
 
-      - name: Run tests
-        run: go test -v -race -count=1 ./...
+  windows:
+    name: Windows tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test -p 1 -parallel 2 -count=1 -timeout=15m ./...
 
   build:
-    name: Build
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         include:
           - goos: linux
@@ -53,33 +109,49 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
+          - goos: windows
+            goarch: amd64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-
-      - name: Build server
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -ldflags="-w -s" -o /dev/null ./cmd/server
-
-      - name: Build CLI
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -ldflags="-w -s" -o /dev/null ./cmd/cli
+      - run: go build -trimpath -o dist/ ./cmd/server ./cmd/cli
 
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: docker build -f docker/Dockerfile -t sshvault-server:ci .
+      - name: Check runtime permissions and backup tools
+        run: |
+          docker run --rm --entrypoint sh sshvault-server:ci -ec '
+            test "$(id -u)" != 0
+            test -w /app/backups
+            test -w /app/keys
+            test -w /app/logs
+            pg_dump --version
+            gzip --version
+          '
 
-      - name: Build Docker image
-        run: docker build -f docker/Dockerfile -t sshvault-server:ci .
+  required:
+    name: CI
+    if: always()
+    needs: [lint, test, windows, build, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require all checks to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: echo "$RESULTS" | jq -e 'all(.[]; .result == "success")'

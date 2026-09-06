@@ -1,7 +1,6 @@
 # Build stage
-# Pin to specific minor version; in production, pin to SHA256 digest for reproducible builds:
-#   FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:<digest> AS builder
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
+# Multi-platform digests are updated by Dependabot.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -18,8 +17,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /sshvault-cli ./cmd/cli
 
 # Runtime stage
-# In production, pin to SHA256 digest: FROM alpine:3.21@sha256:<digest>
-FROM alpine:3.24
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 RUN apk add --no-cache ca-certificates tzdata postgresql16-client gzip
 

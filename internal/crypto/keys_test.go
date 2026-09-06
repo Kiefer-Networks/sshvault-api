@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -38,12 +39,13 @@ func TestSaveAndLoadKey(t *testing.T) {
 		t.Fatalf("SaveEd25519PrivateKey: %v", err)
 	}
 
-	// Verify file permissions
+	// Windows mode bits do not describe ACLs. Verify Unix permissions only;
+	// the save/load round trip below still runs on every platform.
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0600 {
 		t.Errorf("file permissions = %o, want 0600", perm)
 	}
 
