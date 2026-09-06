@@ -546,3 +546,39 @@ func TestIntegrationEmailChangeRevokesTokenCommittedWhileWaiting(t *testing.T) {
 		t.Fatal("email change missed token committed while waiting for user lock")
 	}
 }
+
+type afterCreateUsers struct {
+	repository.UserRepository
+	afterCreate func(*model.User)
+}
+
+func (r afterCreateUsers) Create(ctx context.Context, user *model.User) error {
+	if err := r.UserRepository.Create(ctx, user); err != nil {
+		return err
+	}
+	r.afterCreate(user)
+	return nil
+}
+func TestIntegrationRegistrationCannotIssueForChangedEmail(t *testing.T) {
+	pool := authDatabase(t)
+	ctx := context.Background()
+	users := repository.NewUserRepository(pool)
+	verify := repository.NewVerificationRepository(pool)
+	wrapped := afterCreateUsers{users, func(user *model.User) {
+		if err := users.UpdateEmail(ctx, user.ID, "replacement@example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	svc := NewAuthService(wrapped, repository.NewTokenRepository(pool), verify, repository.NewTransactor(pool), newTestJWT(t), &mockMailer{}, nil)
+	response, err := svc.Register(ctx, &RegisterRequest{Email: "registration@example.com", Password: "password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var active int
+	if err = pool.QueryRow(ctx, "SELECT count(*) FROM verification_tokens WHERE user_id=$1 AND NOT used", response.User.ID).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 0 {
+		t.Fatalf("%d registration links issued for obsolete mailbox", active)
+	}
+}
