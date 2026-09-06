@@ -264,12 +264,12 @@ func restoreBackup(databaseURL, file string, manifest *restoreManifest) error {
 	if err != nil {
 		return fmt.Errorf("opening backup: %w", err)
 	}
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 	compressed, err := gzip.NewReader(input)
 	if err != nil {
 		return fmt.Errorf("opening compressed backup: %w", err)
 	}
-	defer compressed.Close()
+	defer func() { _ = compressed.Close() }()
 	staged, err := os.CreateTemp("", "sshvault-restore-*.sql")
 	if err != nil {
 		return fmt.Errorf("staging restore: %w", err)
