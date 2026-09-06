@@ -45,7 +45,7 @@ The server follows strict privacy principles:
 
 ### Prerequisites
 
-- Go 1.26+
+- Go 1.27+
 - PostgreSQL 16+
 - Docker & Docker Compose (optional)
 - A reverse proxy (Traefik or Caddy) for TLS termination
