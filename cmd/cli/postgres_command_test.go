@@ -70,3 +70,17 @@ func TestPostgresCommandAcceptsExistingKeywordConnectionStrings(t *testing.T) {
 		t.Fatal("quoted keyword credentials were not preserved")
 	}
 }
+
+func TestPostgresURIQueryPreservesLibpqEscaping(t *testing.T) {
+	const parameters = "options=-c%20statement_timeout%3D5000&sslrootcert=%2Ftmp%2Froot%20CA%2B.pem&application_name=backup+worker"
+	connection, credentials, err := postgresConnection("postgresql://operator:secret@localhost/db?" + parameters + "&password=encoded+password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection != "postgresql://localhost/db?"+parameters {
+		t.Fatal("non-credential URI query encoding changed")
+	}
+	if credentials["PGPASSWORD"] != "encoded+password" {
+		t.Fatal("libpq literal plus in credential was decoded as a space")
+	}
+}

@@ -279,3 +279,20 @@ func TestBackupRestoreKeywordConnectionString(t *testing.T) {
 		t.Fatalf("keyword-DSN restore returned %q", got)
 	}
 }
+
+func TestBackupRestoreURIPercentEncodedOptions(t *testing.T) {
+	p, dsn := backupTestDB(t)
+	dsn += "&options=-c%20statement_timeout%3D5000"
+	execSQL(t, p, "CREATE TABLE sample(value text); INSERT INTO sample VALUES('saved')")
+	path, err := createBackup(dsn, t.TempDir())
+	if err != nil {
+		t.Fatalf("valid percent-encoded libpq option prevented backup: %v", err)
+	}
+	execSQL(t, p, "UPDATE sample SET value='changed'")
+	if err = restoreBackup(dsn, path, nil); err != nil {
+		t.Fatalf("valid percent-encoded libpq option prevented restore: %v", err)
+	}
+	if got := value(t, p); got != "saved" {
+		t.Fatalf("restored %q instead of saved", got)
+	}
+}

@@ -117,14 +117,18 @@ func (r *pgUserRepo) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model
 }
 
 func (r *pgUserRepo) updateFields(ctx context.Context, query string, args ...any) error {
-	result, err := conn(ctx, r.pool).Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("updating user: %w", err)
-	}
-	if result.RowsAffected() != 1 {
-		return fmt.Errorf("user not found or changed")
-	}
-	return nil
+	// Standalone field updates (including avatar handlers) need maintenance
+	// protection too. An existing transaction reuses its lock and connection.
+	return NewTransactor(r.pool).WithTransaction(ctx, func(txCtx context.Context) error {
+		result, err := conn(txCtx, r.pool).Exec(txCtx, query, args...)
+		if err != nil {
+			return fmt.Errorf("updating user: %w", err)
+		}
+		if result.RowsAffected() != 1 {
+			return fmt.Errorf("user not found or changed")
+		}
+		return nil
+	})
 }
 
 // UpdateEmail also invalidates links sent to the previous mailbox atomically.

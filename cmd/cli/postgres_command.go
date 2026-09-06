@@ -51,17 +51,29 @@ func postgresConnection(value string) (string, map[string]string, error) {
 			}
 			connection.User = nil
 		}
-		query, err := url.ParseQuery(connection.RawQuery)
-		if err != nil {
-			return invalid()
-		}
-		for key, environment := range map[string]string{"user": "PGUSER", "password": "PGPASSWORD"} {
-			if query.Has(key) {
-				credentials[environment] = query.Get(key)
-				query.Del(key)
+		// libpq uses URI percent decoding, not HTML form decoding: '+' is
+		// literal and %20 is a space. Keep non-credential parameters verbatim.
+		var parameters []string
+		for _, parameter := range strings.Split(connection.RawQuery, "&") {
+			key, rawValue, _ := strings.Cut(parameter, "=")
+			key, err = url.PathUnescape(key)
+			if err != nil {
+				return invalid()
+			}
+			decoded, err := url.PathUnescape(rawValue)
+			if err != nil {
+				return invalid()
+			}
+			switch key {
+			case "user":
+				credentials["PGUSER"] = decoded
+			case "password":
+				credentials["PGPASSWORD"] = decoded
+			default:
+				parameters = append(parameters, parameter)
 			}
 		}
-		connection.RawQuery = query.Encode()
+		connection.RawQuery = strings.Join(parameters, "&")
 		return connection.String(), credentials, nil
 	}
 	// libpq also accepts keyword/value DSNs. Preserve each non-credential field
