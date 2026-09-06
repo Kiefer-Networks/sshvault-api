@@ -158,7 +158,7 @@ func (r *pgUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, expectedP
 		if err := r.updateFields(txCtx, `UPDATE users SET password=$3,pending_email='',session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND password=$2 AND deleted_at IS NULL`, id, expectedPassword, password); err != nil {
 			return err
 		}
-		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE verification_tokens SET used=TRUE WHERE user_id=$1 AND kind IN ($2,$3) AND NOT used`, id, TokenKindEmailChange, TokenKindEmailVerify)
+		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE verification_tokens SET used=TRUE WHERE user_id=$1 AND kind IN ($2,$3,$4) AND NOT used`, id, TokenKindEmailChange, TokenKindEmailVerify, TokenKindPasswordReset)
 		return err
 	})
 }
