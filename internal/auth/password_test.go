@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -8,6 +9,20 @@ import (
 
 	"golang.org/x/crypto/argon2"
 )
+
+func TestArgon2AdmissionHonorsContextCancellation(t *testing.T) {
+	release, err := acquireArgon2(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = acquireArgon2(ctx); err == nil {
+		t.Fatal("cancelled waiter acquired Argon2 capacity")
+	}
+}
 
 // legacyHash generates a hash with v1 parameters (64 MiB, p=4) for backward-compat testing.
 func legacyHash(password string, salt []byte) string {
@@ -94,6 +109,23 @@ func TestVerifyPasswordInvalidFormat(t *testing.T) {
 	_, err := VerifyPassword("any", "not-a-valid-hash")
 	if err == nil {
 		t.Error("expected error for invalid hash format")
+	}
+}
+
+func TestVerifyPasswordRejectsUnsafeEncodedParameters(t *testing.T) {
+	tests := []string{
+		"$argon2id$v=19$m=8,t=1,p=1$MDEyMzQ1Njc4OWFiY2RlZg$",
+		"$argon2id$v=19$m=262145,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAA",
+		"$argon2id$v=19$m=262144,t=0,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAA",
+		"$argon2id$v=19$m=262144,t=3,p=0$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAA",
+		"$argon2id$v=18$m=262144,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAA",
+		"$other$v=19$m=262144,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAA",
+		"$argon2id$v=19$m=262144,t=3,p=1,trailing$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAA",
+	}
+	for _, encoded := range tests {
+		if ok, err := VerifyPassword("password", encoded); err == nil || ok {
+			t.Errorf("VerifyPassword(%q) = %v, %v; want rejection", encoded, ok, err)
+		}
 	}
 }
 

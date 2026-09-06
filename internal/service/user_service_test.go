@@ -284,6 +284,20 @@ func TestUpdateProfileInvalidEmail(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileRejectsDisplayNameEmail(t *testing.T) {
+	repo := newUserSvcMockUserRepo()
+	svc := newUserService(repo, newUserSvcMockTokenRepo())
+	user := seedUser(repo, "valid@example.com", "password123")
+
+	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+		CurrentPassword: "password123",
+		Email:           "Name <other@example.com>",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid email format") {
+		t.Fatalf("display-name mailbox accepted: %v", err)
+	}
+}
+
 func TestUpdateProfileEmailAlreadyInUse(t *testing.T) {
 	repo := newUserSvcMockUserRepo()
 	svc := newUserService(repo, newUserSvcMockTokenRepo())

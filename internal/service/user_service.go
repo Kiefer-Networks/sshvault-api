@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -76,10 +75,10 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 	}
 
 	if req.Email != "" && req.Email != user.Email {
-		if _, err := mail.ParseAddress(req.Email); err != nil {
+		if err := ValidateEmail(req.Email); err != nil {
 			return nil, fmt.Errorf("invalid email format")
 		}
-		valid, err := auth.VerifyPassword(req.CurrentPassword, user.Password)
+		valid, err := auth.VerifyPasswordContext(ctx, req.CurrentPassword, user.Password)
 		if err != nil || !valid {
 			return nil, fmt.Errorf("invalid current password")
 		}
@@ -138,13 +137,13 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 	}
 
 	if user.Password != "" {
-		valid, err := auth.VerifyPassword(req.CurrentPassword, user.Password)
+		valid, err := auth.VerifyPasswordContext(ctx, req.CurrentPassword, user.Password)
 		if err != nil || !valid {
 			return fmt.Errorf("invalid current password")
 		}
 	}
 
-	hash, err := auth.HashPassword(req.NewPassword)
+	hash, err := auth.HashPasswordContext(ctx, req.NewPassword)
 	if err != nil {
 		return fmt.Errorf("hashing password: %w", err)
 	}
