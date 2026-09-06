@@ -6,18 +6,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kiefernetworks/shellvault-server/internal/maintenance"
 )
 
-const maintenanceLockKey int64 = 734862190201
+const maintenanceLockKey = maintenance.LockKey
 
 // LockAccountMutation must precede all table and user-row locks. Transaction
 // scope releases the shared lock on both commit and rollback.
 func LockAccountMutation(ctx context.Context, tx pgx.Tx) error {
-	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock_shared($1)", maintenanceLockKey)
-	if err != nil {
-		return fmt.Errorf("locking account maintenance: %w", err)
-	}
-	return nil
+	return maintenance.LockAccountMutation(ctx, tx)
 }
 
 // WithExclusiveMaintenance uses a dedicated session without an open transaction:

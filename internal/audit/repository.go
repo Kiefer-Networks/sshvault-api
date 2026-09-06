@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kiefernetworks/shellvault-server/internal/maintenance"
 )
 
 // Repository handles database operations for audit logs.
@@ -25,13 +26,16 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // Insert writes an audit entry to the database.
 func (r *Repository) Insert(ctx context.Context, e *Entry) error {
-	// Acquire the identity lock before touching audit_logs, matching purge's
-	// lock order. Buffered events arriving after deletion must not restore PII.
+	// Maintenance precedes identity and audit table locks, matching restore
+	// and purge. Buffered events after deletion must not restore PII.
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning audit insert: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := maintenance.LockAccountMutation(ctx, tx); err != nil {
+		return err
+	}
 	copyEntry := *e
 	e = &copyEntry
 	e.IPAddress = ""
