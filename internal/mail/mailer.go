@@ -25,20 +25,22 @@ type Mailer interface {
 }
 
 type SMTPMailer struct {
-	host string
-	port int
-	user string
-	pass string
-	from string
+	implicitTLS bool
+	host        string
+	port        int
+	user        string
+	pass        string
+	from        string
 }
 
 func NewSMTPMailer(host string, port int, user, pass, from string) *SMTPMailer {
 	return &SMTPMailer{
-		host: host,
-		port: port,
-		user: user,
-		pass: pass,
-		from: from,
+		implicitTLS: port == 465,
+		host:        host,
+		port:        port,
+		user:        user,
+		pass:        pass,
+		from:        from,
 	}
 }
 
@@ -65,19 +67,34 @@ func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	}
 	stopCancellation := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopCancellation()
-	client, err := smtp.NewClient(conn, m.host)
+	tlsConfig := &tls.Config{ServerName: m.host, MinVersion: tls.VersionTLS12}
+	var smtpConn net.Conn = conn
+	if m.implicitTLS {
+		secure := tls.Client(conn, tlsConfig)
+		if err := secure.HandshakeContext(ctx); err != nil {
+			return fmt.Errorf("SMTP TLS handshake: %w", err)
+		}
+		smtpConn = secure
+	}
+	client, err := smtp.NewClient(smtpConn, m.host)
 	if err != nil {
 		return fmt.Errorf("SMTP greeting: %w", err)
 	}
 	defer client.Close()
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err = client.StartTLS(&tls.Config{ServerName: m.host, MinVersion: tls.VersionTLS12}); err != nil {
-			return err
+	if !m.implicitTLS {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("SMTP requires STARTTLS")
+		}
+		if err = client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("SMTP STARTTLS: %w", err)
 		}
 	}
-	if ok, _ := client.Extension("AUTH"); ok {
+	if m.user != "" || m.pass != "" {
+		if ok, _ := client.Extension("AUTH"); !ok {
+			return fmt.Errorf("SMTP credentials configured but AUTH is unavailable")
+		}
 		if err = client.Auth(smtp.PlainAuth("", m.user, m.pass, m.host)); err != nil {
-			return err
+			return fmt.Errorf("SMTP authentication: %w", err)
 		}
 	}
 	if err = client.Mail(m.from); err != nil {

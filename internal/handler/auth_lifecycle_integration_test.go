@@ -100,7 +100,7 @@ func TestLifecycleUnverifiedLoginHTTP(t *testing.T) {
 	h := NewAuthHandler(svc, audit.NewNopLogger())
 	w := httptest.NewRecorder()
 	h.Login(w, httptest.NewRequest("POST", "/v1/auth/login", strings.NewReader(`{"email":"unverified@example.com","password":"password123"}`)))
-	if w.Code != 403 || decodeError(t, w) != "verification_required" {
+	if w.Code != 401 || decodeError(t, w) != "invalid credentials" {
 		t.Fatalf("unverified login status/body: %d %s", w.Code, w.Body)
 	}
 }

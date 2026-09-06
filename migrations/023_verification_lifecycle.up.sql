@@ -3,7 +3,6 @@ ALTER TABLE users ADD COLUMN verification_grandfathered BOOLEAN NOT NULL DEFAULT
 UPDATE users SET verification_grandfathered=TRUE;
 ALTER TABLE users ADD COLUMN pending_email TEXT NOT NULL DEFAULT '';
 
-ALTER TABLE verification_tokens ADD COLUMN registration_password_hash TEXT NOT NULL DEFAULT '';
 -- Retain at most one effective token per account and purpose on upgrade.
 WITH ranked AS (
  SELECT id, row_number() OVER (PARTITION BY user_id,kind ORDER BY created_at DESC,id DESC) AS position

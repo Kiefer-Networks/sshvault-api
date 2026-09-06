@@ -1,11 +1,62 @@
 package mail
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestSMTPRejectsMissingSTARTTLSBeforeMessage(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	commands := make(chan []string, 1)
+	go func() {
+		var seen []string
+		defer func() { commands <- seen }()
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(time.Second))
+		fmt.Fprint(conn, "220 localhost ESMTP\r\n")
+		reader := bufio.NewReader(conn)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			seen = append(seen, line)
+			switch {
+			case strings.HasPrefix(line, "EHLO"):
+				fmt.Fprint(conn, "250 localhost\r\n")
+			case strings.HasPrefix(line, "DATA"):
+				fmt.Fprint(conn, "354 continue\r\n")
+			case strings.HasPrefix(line, "QUIT"):
+				fmt.Fprint(conn, "221 bye\r\n")
+				return
+			default:
+				fmt.Fprint(conn, "250 OK\r\n")
+			}
+		}
+	}()
+	m := NewSMTPMailer("127.0.0.1", listener.Addr().(*net.TCPAddr).Port, "configured-user", "configured-password", "sender@example.com")
+	if err = m.Send(context.Background(), "owner@example.com", "subject", "secret-token-body"); err == nil {
+		t.Error("SMTP accepted an unencrypted connection without STARTTLS")
+	}
+	for _, line := range <-commands {
+		if strings.HasPrefix(line, "MAIL") || strings.HasPrefix(line, "AUTH") || strings.Contains(line, "secret-token-body") {
+			t.Errorf("sensitive SMTP operation before TLS: %q", line)
+		}
+	}
+}
 
 func TestSMTPDeliveryCancellationClosesStalledConnection(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

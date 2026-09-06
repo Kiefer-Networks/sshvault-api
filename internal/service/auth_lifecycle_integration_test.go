@@ -163,7 +163,7 @@ func TestLifecycleConfirmationAtomicAndSingleUse(t *testing.T) {
 	if mail.destination != "new@example.com" || mail.change == "" {
 		t.Fatal("confirmation not sent to pending mailbox")
 	}
-	if err = as.VerifyEmail(ctx, mail.change); err == nil {
+	if err = as.VerifyEmail(ctx, mail.change, "password123"); err == nil {
 		t.Fatal("email-change token accepted for registration verification")
 	}
 	confirmer := us
@@ -195,7 +195,7 @@ func TestLifecycleConfirmationAtomicAndSingleUse(t *testing.T) {
 	if err = confirmer.ConfirmEmailChange(ctx, mail.change); err == nil {
 		t.Fatal("confirmation replay accepted")
 	}
-	if err = as.VerifyEmail(ctx, mail.verification); err == nil {
+	if err = as.VerifyEmail(ctx, mail.verification, "password123"); err == nil {
 		t.Fatal("obsolete verification token accepted")
 	}
 	if _, err = as.Refresh(ctx, &RefreshRequest{RefreshToken: response.RefreshToken}); err == nil {
@@ -442,7 +442,7 @@ func TestLifecycleVerifiedRegistrationPreservesPassword(t *testing.T) {
 	if _, err := svc.Register(ctx, &RegisterRequest{Email: "new@example.com", Password: "original-password"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.VerifyEmail(ctx, mail.verification); err != nil {
+	if err := svc.VerifyEmail(ctx, mail.verification, "original-password"); err != nil {
 		t.Fatal(err)
 	}
 	mail.verification = ""

@@ -28,3 +28,8 @@ func registerEmailChangeRoutes(r chi.Router, h *handler.UserHandler) {
 	r.Get("/confirm-email-change", h.PreviewEmailChange)
 	r.Post("/confirm-email-change", h.ConfirmEmailChange)
 }
+
+func registerVerificationRoutes(r chi.Router, h *handler.AuthHandler) {
+	r.Get("/verify-email", h.VerifyEmail)
+	r.Post("/verify-email", h.VerifyEmail)
+}

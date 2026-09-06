@@ -435,7 +435,7 @@ func TestVerifyEmailSuccess(t *testing.T) {
 	if user.Verified {
 		t.Fatal("new account already verified")
 	}
-	if err := svc.VerifyEmail(ctx, mail.verification); err != nil {
+	if err := svc.VerifyEmail(ctx, mail.verification, "password123"); err != nil {
 		t.Fatal(err)
 	}
 	if !user.Verified {
@@ -446,7 +446,7 @@ func TestVerifyEmailSuccess(t *testing.T) {
 func TestVerifyEmailInvalidToken(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
 
-	err := svc.VerifyEmail(context.Background(), "invalid-token")
+	err := svc.VerifyEmail(context.Background(), "invalid-token", "password123")
 	if err == nil {
 		t.Fatal("expected error for invalid token")
 	}
@@ -609,12 +609,4 @@ func (m *mockUserRepo) ActivateRegistration(ctx context.Context, id uuid.UUID, e
 
 func (m *mockVerifyRepo) ReserveMailSend(context.Context, string, string) (bool, error) {
 	return true, nil
-}
-func (m *mockVerifyRepo) PendingRegistrationPassword(_ context.Context, id uuid.UUID) (string, error) {
-	for _, token := range m.tokens {
-		if token.UserID == id && token.Kind == repository.TokenKindEmailVerify && !token.Used {
-			return token.RegistrationPasswordHash, nil
-		}
-	}
-	return "", nil
 }

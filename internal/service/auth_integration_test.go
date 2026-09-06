@@ -428,15 +428,15 @@ func TestIntegrationVerificationRollback(t *testing.T) {
 	if err := users.Create(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	if err := verify.Create(ctx, &repository.VerificationToken{UserID: u.ID, TokenHash: auth.HashToken("verify"), Kind: repository.TokenKindEmailVerify, RegistrationPasswordHash: "bound-hash", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if err := verify.Create(ctx, &repository.VerificationToken{UserID: u.ID, TokenHash: auth.HashToken("verify"), Kind: repository.TokenKindEmailVerify, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	svc := NewAuthService(failVerifyUsers{users}, tokens, verify, tx, newTestJWT(t), nil, nil)
-	if err := svc.VerifyEmail(ctx, "verify"); err == nil {
+	if err := svc.VerifyEmail(ctx, "verify", "password123"); err == nil {
 		t.Fatal("expected verification failure")
 	}
 	svc.userRepo = users
-	if err := svc.VerifyEmail(ctx, "verify"); err != nil {
+	if err := svc.VerifyEmail(ctx, "verify", "password123"); err != nil {
 		t.Fatalf("failed verification consumed token: %v", err)
 	}
 }

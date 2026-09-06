@@ -319,7 +319,7 @@ func main() {
 
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
-			r.Get("/verify-email", authHandler.VerifyEmail)
+			registerVerificationRoutes(r, authHandler)
 			registerEmailChangeRoutes(r, userHandler)
 			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)

@@ -9,5 +9,5 @@ DO $$ BEGIN
 END $$;
 DROP TABLE mail_send_budgets;
 DROP INDEX verification_tokens_one_active;
-ALTER TABLE verification_tokens DROP COLUMN registration_password_hash;
+ALTER TABLE verification_tokens DROP COLUMN IF EXISTS registration_password_hash;
 ALTER TABLE users DROP COLUMN pending_email, DROP COLUMN verification_grandfathered;

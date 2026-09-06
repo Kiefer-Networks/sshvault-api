@@ -101,7 +101,7 @@ paths:
     post:
       tags: [Auth]
       summary: Register new account
-      description: Requires a solved PoW challenge. Always returns the same opaque acceptance for new, existing, and deleted addresses. New accounts must verify before login. Each signup attempt hashes its submitted password before checking existence. For new unverified accounts, verification installs only the password hash bound to that specific attempt. Later attempts invalidate prior links. Delivery is queued with a 60-second per-recipient, per-purpose cooldown; retry after one minute if a resend is throttled.
+      description: Requires a solved PoW challenge. New, existing, and deleted addresses receive identical opaque acceptance. Submitted passwords are hashed for equal work and discarded, never installed or stored for activation. A new account has an unusable random password until its mailbox owner explicitly verifies with a chosen new_password. Delivery is queued with a 60-second recipient/purpose cooldown. Throttled requests send nothing and preserve the existing viable link; an admitted resend replaces it.
       operationId: register
       parameters:
         - $ref: "#/components/parameters/PowChallenge"
@@ -186,7 +186,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Invalid or expired proof of work, or verification_required for correct credentials on a new unverified account
+          description: Invalid or expired proof of work
           content:
             application/json:
               schema:
@@ -242,9 +242,9 @@ paths:
   /v1/auth/verify-email:
     get:
       tags: [Auth]
-      summary: Verify email address
-      description: For a new account, consumes the current signup token and atomically installs only its bound password hash. Superseded links are invalid. Existing grandfathered verification links preserve the existing password.
-      operationId: verifyEmail
+      summary: Preview mailbox activation
+      description: Non-mutating HTML password form. Opening or scanning this link never consumes a token or changes account/session state.
+      operationId: previewVerification
       parameters:
         - name: token
           in: query
@@ -253,7 +253,30 @@ paths:
             type: string
       responses:
         "200":
-          description: Email verified
+          description: Password-entry form; no account mutation
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          description: Missing token
+    post:
+      tags: [Auth]
+      summary: Verify mailbox and activate a new account
+      description: Consumes a single-use mailbox token. For a new account, atomically verifies the address and installs only the new_password chosen by the mailbox owner here, ignoring all prior signup passwords. Grandfathered verification preserves existing credentials. Password length is enforced as 8–256 UTF-8 bytes. Sign in separately after activation.
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyEmailRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/VerifyEmailRequest"
+      responses:
+        "200":
+          description: Email verified; no session tokens issued
           content:
             application/json:
               schema:
@@ -263,7 +286,7 @@ paths:
                     type: string
                     example: email verified
         "400":
-          description: Invalid or expired token
+          description: Invalid password length, missing fields, or invalid/expired/consumed token
           content:
             application/json:
               schema:
@@ -832,6 +855,20 @@ components:
         example: "48291"
 
   schemas:
+    VerifyEmailRequest:
+      type: object
+      required: [token, new_password]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 256
+          description: Password chosen by the mailbox owner; the server enforces 8–256 UTF-8 bytes.
+
     ErrorResponse:
       type: object
       required:

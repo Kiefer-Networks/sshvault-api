@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
 	"strings"
 
@@ -142,18 +143,58 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
+var registrationPreview = template.Must(template.New("registration").Parse(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Activate your account</title></head><body>
+<h1>Choose your SSHVault password</h1><p>To activate a new account, choose your own password. Opening this link does not activate the account. Existing accounts keep their current password.</p>
+<form action="/v1/auth/verify-email" method="post"><input type="hidden" name="token" value="{{.}}"><label>New password <input type="password" name="new_password" autocomplete="new-password" minlength="8" maxlength="256" required></label><button type="submit">Verify email</button></form>
+<p>If you do not want an account, close this page.</p></body></html>`))
+
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		respondError(w, http.StatusBadRequest, "token is required")
+	if r.Method == http.MethodGet {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			respondError(w, http.StatusBadRequest, "token is required")
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		_ = registrationPreview.Execute(w, token)
 		return
 	}
-
-	if err := h.authService.VerifyEmail(r.Context(), token); err != nil {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		respondError(w, http.StatusMethodNotAllowed, "POST is required")
+		return
+	}
+	var req struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		req.Token = r.PostForm.Get("token")
+		req.NewPassword = r.PostForm.Get("new_password")
+	} else if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Token == "" || req.NewPassword == "" {
+		respondError(w, http.StatusBadRequest, "token and new_password are required")
+		return
+	}
+	if len(req.NewPassword) < MinPasswordLength || len(req.NewPassword) > MaxPasswordLength {
+		respondError(w, http.StatusBadRequest, "password must be between 8 and 256 bytes")
+		return
+	}
+	if err := h.authService.VerifyEmail(r.Context(), req.Token, req.NewPassword); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid or expired token")
 		return
 	}
-
 	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActVerifyEmail).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "email verified"})
 }

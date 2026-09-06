@@ -9,7 +9,7 @@ func VerificationEmailBody(apiBaseURL, token string) string {
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px;">
   <div style="max-width: 600px; margin: 0 auto;">
     <h2>Verify your SSHVault email</h2>
-    <p>Please click the link below to verify your email address:</p>
+    <p>Open the link below and choose your own password to activate a new account. Opening the link alone makes no changes. The link expires in 24 hours:</p>
     <p>
       <a href="%s/v1/auth/verify-email?token=%s"
          style="display: inline-block; padding: 12px 24px; background: #007AFF; color: white; text-decoration: none; border-radius: 8px;">

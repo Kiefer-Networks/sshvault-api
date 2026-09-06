@@ -21,8 +21,8 @@ func NewVerificationRepository(pool *pgxpool.Pool) VerificationRepository {
 
 func (r *pgVerificationRepo) Create(ctx context.Context, token *VerificationToken) error {
 	query := `
-		INSERT INTO verification_tokens (id, user_id, token_hash, kind, expires_at, used, created_at, registration_password_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		INSERT INTO verification_tokens (id, user_id, token_hash, kind, expires_at, used, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 	if token.ID == uuid.Nil {
 		token.ID = uuid.New()
@@ -31,7 +31,7 @@ func (r *pgVerificationRepo) Create(ctx context.Context, token *VerificationToke
 
 	_, err := conn(ctx, r.pool).Exec(ctx, query,
 		token.ID, token.UserID, token.TokenHash, token.Kind,
-		token.ExpiresAt, false, token.CreatedAt, token.RegistrationPasswordHash)
+		token.ExpiresAt, false, token.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("creating verification token: %w", err)
 	}
@@ -40,14 +40,14 @@ func (r *pgVerificationRepo) Create(ctx context.Context, token *VerificationToke
 
 func (r *pgVerificationRepo) GetByHash(ctx context.Context, tokenHash, kind string) (*VerificationToken, error) {
 	query := `
-		SELECT id, user_id, token_hash, kind, expires_at, used, created_at, registration_password_hash
+		SELECT id, user_id, token_hash, kind, expires_at, used, created_at
 		FROM verification_tokens
 		WHERE token_hash = $1 AND kind = $2 AND NOT used`
 
 	var t VerificationToken
 	err := conn(ctx, r.pool).QueryRow(ctx, query, tokenHash, kind).Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.Kind,
-		&t.ExpiresAt, &t.Used, &t.CreatedAt, &t.RegistrationPasswordHash)
+		&t.ExpiresAt, &t.Used, &t.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -62,12 +62,12 @@ func (r *pgVerificationRepo) ConsumeVerificationToken(ctx context.Context, token
 		UPDATE verification_tokens
 		SET used = TRUE
 		WHERE token_hash = $1 AND kind = $2 AND NOT used AND expires_at > NOW()
-		RETURNING id, user_id, token_hash, kind, expires_at, used, created_at, registration_password_hash`
+		RETURNING id, user_id, token_hash, kind, expires_at, used, created_at`
 
 	var t VerificationToken
 	err := conn(ctx, r.pool).QueryRow(ctx, query, tokenHash, kind).Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.Kind,
-		&t.ExpiresAt, &t.Used, &t.CreatedAt, &t.RegistrationPasswordHash)
+		&t.ExpiresAt, &t.Used, &t.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -117,13 +117,4 @@ func (r *pgVerificationRepo) ReserveMailSend(ctx context.Context, digest, purpos
 		return false, nil
 	}
 	return admitted, err
-}
-func (r *pgVerificationRepo) PendingRegistrationPassword(ctx context.Context, id uuid.UUID) (string, error) {
-	var hash string
-	err := conn(ctx, r.pool).QueryRow(ctx, `SELECT registration_password_hash FROM verification_tokens
- WHERE user_id=$1 AND kind=$2 AND NOT used AND expires_at>NOW()`, id, TokenKindEmailVerify).Scan(&hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	return hash, err
 }

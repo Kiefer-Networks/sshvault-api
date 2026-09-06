@@ -93,3 +93,35 @@ func TestRecipientMailBudgetIsAtomicAcrossConcurrentCallers(t *testing.T) {
 		t.Fatalf("expired budget not renewed: %v", err)
 	}
 }
+
+func TestActivationMigrationRemovesDraftCredentialBinding(t *testing.T) {
+	p := testutil.Database(t, 23)
+	ctx := context.Background()
+	// Simulate the earlier unpublished migration draft on an already-upgraded database.
+	testutil.Exec(t, p, "ALTER TABLE verification_tokens ADD COLUMN IF NOT EXISTS registration_password_hash TEXT NOT NULL DEFAULT ''")
+	testutil.Exec(t, p, "INSERT INTO users(email,password) VALUES('pending@example.com','!unverified:random')")
+	testutil.Exec(t, p, "INSERT INTO verification_tokens(user_id,token_hash,kind,expires_at,registration_password_hash) SELECT id,'live-token','email_verify',NOW()+interval '1 hour','obsolete-requester-hash' FROM users")
+	up, err := os.ReadFile(filepath.Join(testutil.MigrationDir(), "024_mailbox_owner_activation.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Exec(t, p, string(up))
+	var count int
+	if err = p.QueryRow(ctx, "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='verification_tokens' AND column_name='registration_password_hash'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("obsolete credential column remains: count=%d err=%v", count, err)
+	}
+	token, err := NewVerificationRepository(p).GetByHash(ctx, "live-token", TokenKindEmailVerify)
+	if err != nil || token == nil {
+		t.Fatal("cleanup invalidated the mailbox owner's live link")
+	}
+	down, err := os.ReadFile(filepath.Join(testutil.MigrationDir(), "024_mailbox_owner_activation.down.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Exec(t, p, string(down))
+	testutil.Exec(t, p, string(up))
+	var verified, grandfathered bool
+	if err = p.QueryRow(ctx, "SELECT verified,verification_grandfathered FROM users").Scan(&verified, &grandfathered); err != nil || verified || grandfathered {
+		t.Fatal("cleanup down/up changed pending account provenance")
+	}
+}

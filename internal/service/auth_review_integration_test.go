@@ -32,51 +32,6 @@ func (m *reviewMailbox) last() string {
 	return m.tokens[len(m.tokens)-1]
 }
 func (m *reviewMailbox) count() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.tokens) }
-func TestRegistrationAttemptOwnsActivatedPassword(t *testing.T) {
-	p := authDatabase(t)
-	ctx := context.Background()
-	users := repository.NewUserRepository(p)
-	verify := repository.NewVerificationRepository(p)
-	mail := &reviewMailbox{}
-	svc := NewAuthService(users, repository.NewTokenRepository(p), verify, repository.NewTransactor(p), newTestJWT(t), mail, nil)
-	if _, err := svc.Register(ctx, &RegisterRequest{Email: "victim@example.com", Password: "attacker-password"}); err != nil {
-		t.Fatal(err)
-	}
-	attackerToken := mail.last()
-	if _, err := svc.Register(ctx, &RegisterRequest{Email: "victim@example.com", Password: "victim-password"}); err != nil {
-		t.Fatal(err)
-	}
-	u, err := users.GetByEmail(ctx, "victim@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if valid, _ := auth.VerifyPassword("attacker-password", u.Password); valid {
-		t.Error("unverified account has an installed attacker password")
-	}
-	stored, _ := verify.GetByHash(ctx, auth.HashToken(attackerToken), repository.TokenKindEmailVerify)
-	if stored != nil {
-		t.Error("later signup did not invalidate earlier attacker link")
-	}
-	if _, err = p.Exec(ctx, "UPDATE mail_send_budgets SET next_send_at=NOW()-interval '1 second'"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = svc.Register(ctx, &RegisterRequest{Email: "victim@example.com", Password: "victim-password"}); err != nil {
-		t.Fatal(err)
-	}
-	victimToken := mail.last()
-	if victimToken == attackerToken {
-		t.Fatal("victim token absent")
-	}
-	if err := svc.VerifyEmail(ctx, victimToken); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Login(ctx, &LoginRequest{Email: "victim@example.com", Password: "victim-password"}); err != nil {
-		t.Errorf("victim password not activated: %v", err)
-	}
-	if _, err := svc.Login(ctx, &LoginRequest{Email: "victim@example.com", Password: "attacker-password"}); err == nil {
-		t.Error("attacker password authorized victim-verified account")
-	}
-}
 func TestRegistrationConcurrentResendsHaveOneRecipientBudget(t *testing.T) {
 	p := authDatabase(t)
 	ctx := context.Background()
@@ -104,7 +59,7 @@ func TestRegistrationConcurrentResendsHaveOneRecipientBudget(t *testing.T) {
 	if err := p.QueryRow(ctx, "SELECT count(*) FROM verification_tokens WHERE NOT used").Scan(&active); err != nil {
 		t.Fatal(err)
 	}
-	if active > 1 {
+	if active != 1 {
 		t.Errorf("%d outstanding verification links", active)
 	}
 }
@@ -135,7 +90,7 @@ func TestLaterSignupSurvivesDelayedEarlierIssuance(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if err := later.VerifyEmail(ctx, victimToken); err != nil {
+	if err := later.VerifyEmail(ctx, victimToken, "victim-password"); err != nil {
 		t.Fatalf("delayed earlier request invalidated victim token: %v", err)
 	}
 	if _, err := later.Login(ctx, &LoginRequest{Email: "victim@example.com", Password: "victim-password"}); err != nil {
@@ -143,7 +98,7 @@ func TestLaterSignupSurvivesDelayedEarlierIssuance(t *testing.T) {
 	}
 }
 
-func TestPasswordResetInvalidatesTokenBoundSignupPassword(t *testing.T) {
+func TestPasswordResetInvalidatesObsoleteActivationToken(t *testing.T) {
 	p := authDatabase(t)
 	ctx := context.Background()
 	users := repository.NewUserRepository(p)
@@ -164,7 +119,68 @@ func TestPasswordResetInvalidatesTokenBoundSignupPassword(t *testing.T) {
 	if err = svc.ResetPassword(ctx, "owner-reset", "owner-password"); err != nil {
 		t.Fatal(err)
 	}
-	if err = svc.VerifyEmail(ctx, signupToken); err == nil {
-		t.Fatal("signup token reinstated an obsolete attacker password after account recovery")
+	if err = svc.VerifyEmail(ctx, signupToken, "password123"); err == nil {
+		t.Fatal("signup token remained usable after account recovery")
+	}
+}
+
+func TestFirstDeliveredActivationTokenLetsMailboxOwnerChoosePassword(t *testing.T) {
+	p := authDatabase(t)
+	ctx := context.Background()
+	users := repository.NewUserRepository(p)
+	verify := repository.NewVerificationRepository(p)
+	mail := &reviewMailbox{}
+	svc := NewAuthService(users, repository.NewTokenRepository(p), verify, repository.NewTransactor(p), newTestJWT(t), mail, nil)
+	if _, err := svc.Register(ctx, &RegisterRequest{Email: "owner@example.com", Password: "attacker-password"}); err != nil {
+		t.Fatal(err)
+	}
+	first := mail.last()
+	if result, err := svc.Login(ctx, &LoginRequest{Email: "owner@example.com", Password: "attacker-password"}); err == nil || result != nil {
+		t.Fatal("requester's password worked before mailbox activation")
+	}
+	if _, err := svc.Register(ctx, &RegisterRequest{Email: "owner@example.com", Password: "another-requester-password"}); err != nil {
+		t.Fatal(err)
+	}
+	if mail.count() != 1 {
+		t.Fatal("cooldown sent another message")
+	}
+	if err := svc.VerifyEmail(ctx, first, "owner-chosen-password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Login(ctx, &LoginRequest{Email: "owner@example.com", Password: "owner-chosen-password"}); err != nil {
+		t.Fatalf("mailbox owner's chosen password failed: %v", err)
+	}
+	for _, password := range []string{"attacker-password", "another-requester-password"} {
+		if result, err := svc.Login(ctx, &LoginRequest{Email: "owner@example.com", Password: password}); err == nil || result != nil {
+			t.Fatal("requester's password authorized activated account")
+		}
+	}
+}
+
+func TestAdmittedRegistrationReplacesOldActivationLink(t *testing.T) {
+	p := authDatabase(t)
+	ctx := context.Background()
+	users := repository.NewUserRepository(p)
+	verify := repository.NewVerificationRepository(p)
+	mail := &reviewMailbox{}
+	svc := NewAuthService(users, repository.NewTokenRepository(p), verify, repository.NewTransactor(p), newTestJWT(t), mail, nil)
+	if _, err := svc.Register(ctx, &RegisterRequest{Email: "owner@example.com", Password: "requester-password"}); err != nil {
+		t.Fatal(err)
+	}
+	first := mail.last()
+	if _, err := p.Exec(ctx, "UPDATE mail_send_budgets SET next_send_at=NOW()-interval '1 second'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Register(ctx, &RegisterRequest{Email: "owner@example.com", Password: "requester-password"}); err != nil {
+		t.Fatal(err)
+	}
+	if mail.count() != 2 || first == mail.last() {
+		t.Fatal("admitted resend did not replace link")
+	}
+	if err := svc.VerifyEmail(ctx, first, "owner-password"); err == nil {
+		t.Fatal("superseded link activated account")
+	}
+	if err := svc.VerifyEmail(ctx, mail.last(), "owner-password"); err != nil {
+		t.Fatal(err)
 	}
 }

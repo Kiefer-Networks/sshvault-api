@@ -215,3 +215,66 @@ func TestEmailChangePreviewAndFormUseProductionMiddleware(t *testing.T) {
 		t.Fatal("confirmation form replay accepted")
 	}
 }
+
+func (m *serverEmailChangeMailbox) SendVerificationEmail(_ context.Context, _ string, token string) error {
+	m.token = token
+	return nil
+}
+func (m *serverEmailChangeMailbox) SendPasswordResetEmail(context.Context, string, string) error {
+	return nil
+}
+
+func TestActivationPreviewAndPasswordFormUseProductionMiddleware(t *testing.T) {
+	p := testutil.Database(t, 0)
+	ctx := context.Background()
+	users := repository.NewUserRepository(p)
+	verify := repository.NewVerificationRepository(p)
+	mail := &serverEmailChangeMailbox{}
+	svc := service.NewAuthService(users, repository.NewTokenRepository(p), verify, repository.NewTransactor(p), nil, mail, nil)
+	if _, err := svc.Register(ctx, &service.RegisterRequest{Email: "owner@example.com", Password: "attacker-password"}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := users.GetByEmail(ctx, "owner@example.com")
+	limiter := mw.NewRateLimiter(100, 100)
+	defer limiter.Stop()
+	cfg := &config.Config{}
+	cfg.Vault.MaxSizeMB = 15
+	r := chi.NewRouter()
+	productionGlobalMiddleware(r, cfg, limiter)
+	h := handler.NewAuthHandler(svc, audit.NewNopLogger())
+	r.Route("/v1/auth", func(r chi.Router) { registerVerificationRoutes(r, h) })
+	server := httptest.NewServer(r)
+	defer server.Close()
+	client := server.Client()
+	endpoint := server.URL + "/v1/auth/verify-email"
+	resp, err := client.Get(endpoint + "?token=" + mail.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `name="new_password"`) {
+		t.Fatalf("password preview missing: %d", resp.StatusCode)
+	}
+	after, _ := users.GetByID(ctx, before.ID)
+	live, _ := verify.GetByHash(ctx, auth.HashToken(mail.token), repository.TokenKindEmailVerify)
+	if after.Verified || after.Password != before.Password || after.SessionVersion != before.SessionVersion || live == nil {
+		t.Fatal("production scanner GET changed activation state")
+	}
+	if resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("preview omitted secret-safe response headers")
+	}
+	resp, err = client.PostForm(endpoint, url.Values{"token": {mail.token}, "new_password": {"owner-password"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("password form rejected by production middleware: %d %s", resp.StatusCode, body)
+	}
+	after, _ = users.GetByID(ctx, before.ID)
+	if valid, _ := auth.VerifyPassword("owner-password", after.Password); !valid || !after.Verified {
+		t.Fatal("explicit form failed to activate owner password")
+	}
+}

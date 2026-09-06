@@ -170,7 +170,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return nil, err
 	}
 
-	hash, err := auth.HashPassword(req.Password)
+	_, err := auth.HashPassword(req.Password)
 	if err != nil {
 		return nil, fmt.Errorf("hashing password: %w", err)
 	}
@@ -181,7 +181,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 	}
 	if existing != nil {
 		if !existing.Verified && !existing.VerificationGrandfathered {
-			s.sendRegistrationVerification(ctx, existing, req.Email, hash)
+			s.sendRegistrationVerification(ctx, existing, req.Email)
 		}
 		return registrationAccepted(), nil
 	}
@@ -197,7 +197,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 
 	user := &model.User{
 		Email:    req.Email,
-		Password: "!unverified",
+		Password: "!unverified:" + uuid.NewString(),
 		Verified: false,
 	}
 
@@ -205,7 +205,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			if current, lookupErr := s.userRepo.GetByEmail(ctx, req.Email); lookupErr == nil && current != nil {
-				s.sendRegistrationVerification(ctx, current, req.Email, hash)
+				s.sendRegistrationVerification(ctx, current, req.Email)
 			}
 			return registrationAccepted(), nil
 		}
@@ -214,11 +214,11 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 
 	log.Info().Str("email", maskEmail(req.Email)).Str("user_id", user.ID.String()).Msg("user registered")
 
-	s.sendRegistrationVerification(ctx, user, req.Email, hash)
+	s.sendRegistrationVerification(ctx, user, req.Email)
 	return registrationAccepted(), nil
 }
 
-func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *model.User, email, passwordHash string) {
+func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *model.User, email string) {
 	if s.mailer != nil {
 		rawToken := uuid.New().String()
 		hash := auth.HashToken(rawToken)
@@ -232,24 +232,23 @@ func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *mo
 			if current == nil || current.Email != email || current.Verified || current.VerificationGrandfathered || current.SessionVersion != user.SessionVersion {
 				return nil
 			}
-			// Serializing the attempt version also rejects delayed issuance from older snapshots.
-			if err := s.userRepo.RevokeSessions(txCtx, user.ID); err != nil {
-				return err
-			}
-			// Every later signup supersedes older links, even when delivery is throttled.
-			if err := s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindEmailVerify); err != nil {
-				return err
-			}
 			admitted, err := s.verifyRepo.ReserveMailSend(txCtx, mailRecipientDigest(email), repository.TokenKindEmailVerify)
 			if err != nil || !admitted {
 				return err
 			}
+			// Only an admitted delivery supersedes the existing viable link.
+			// The version also rejects delayed issuance from older snapshots.
+			if err := s.userRepo.RevokeSessions(txCtx, user.ID); err != nil {
+				return err
+			}
+			if err := s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindEmailVerify); err != nil {
+				return err
+			}
 			token := &repository.VerificationToken{
-				RegistrationPasswordHash: passwordHash,
-				UserID:                   user.ID,
-				TokenHash:                hash,
-				Kind:                     repository.TokenKindEmailVerify,
-				ExpiresAt:                time.Now().Add(24 * time.Hour),
+				UserID:    user.ID,
+				TokenHash: hash,
+				Kind:      repository.TokenKindEmailVerify,
+				ExpiresAt: time.Now().Add(24 * time.Hour),
 			}
 			if err := s.verifyRepo.Create(txCtx, token); err != nil {
 				return err
@@ -297,7 +296,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 	if err != nil {
 		return nil, fmt.Errorf("finding user: %w", err)
 	}
-	if user == nil {
+	if user == nil || (!user.Verified && !user.VerificationGrandfathered) {
 		// Perform a dummy password verify to equalize timing with real user lookups
 		_, _ = auth.VerifyPassword(req.Password, dummyArgon2Hash)
 		// Record failed attempt even for non-existent accounts to prevent enumeration
@@ -308,17 +307,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	passwordHash := user.Password
-	if !user.Verified && !user.VerificationGrandfathered {
-		pending, err := s.verifyRepo.PendingRegistrationPassword(ctx, user.ID)
-		if err != nil {
-			return nil, err
-		}
-		if pending != "" {
-			passwordHash = pending
-		}
-	}
-	valid, err := auth.VerifyPassword(req.Password, passwordHash)
+	valid, err := auth.VerifyPassword(req.Password, user.Password)
 	if err != nil || !valid {
 		if s.bruteForce != nil {
 			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
@@ -381,8 +370,12 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 	return s.tokenRepo.Revoke(ctx, stored.ID)
 }
 
-// VerifyEmail consumes the token and verifies the user atomically.
-func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
+// VerifyEmail activates a new account with the password chosen by its mailbox owner.
+// Legacy verification only marks the address verified; it never changes existing credentials.
+func (s *AuthService) VerifyEmail(ctx context.Context, rawToken, newPassword string) error {
+	if len(newPassword) < 8 || len(newPassword) > 256 {
+		return fmt.Errorf("password must be between 8 and 256 bytes")
+	}
 	hash := auth.HashToken(rawToken)
 	stored, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindEmailVerify)
 	if err != nil {
@@ -390,6 +383,10 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 	}
 	if stored == nil || !stored.ExpiresAt.After(time.Now()) {
 		return fmt.Errorf("invalid or expired verification token")
+	}
+	passwordHash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("hashing activation password: %w", err)
 	}
 	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
 		// Lock the user before the token, matching email changes and password resets.
@@ -408,10 +405,7 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 			return fmt.Errorf("invalid or expired verification token")
 		}
 		if !user.Verified && !user.VerificationGrandfathered {
-			if token.RegistrationPasswordHash == "" {
-				return fmt.Errorf("invalid registration verification token")
-			}
-			err = s.userRepo.ActivateRegistration(txCtx, user.ID, user.Email, token.RegistrationPasswordHash)
+			err = s.userRepo.ActivateRegistration(txCtx, user.ID, user.Email, passwordHash)
 		} else {
 			err = s.userRepo.MarkVerified(txCtx, user.ID, user.Email)
 		}
