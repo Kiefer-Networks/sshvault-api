@@ -177,6 +177,23 @@ jobs:
         with:
           persist-credentials: false
       - run: docker build -f docker/Dockerfile -t sshvault-server:ci .
+      - name: Scan runtime image and generate SBOM
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-audit"
+          docker save -o "$RUNNER_TEMP/image-audit/image.tar" sshvault-server:ci
+          scanner=aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+          docker run --rm -v "$RUNNER_TEMP/image-audit:/input:ro" "$scanner" \
+            image --input /input/image.tar --format cyclonedx > "$RUNNER_TEMP/runtime-sbom.cdx.json"
+          docker run --rm -v "$RUNNER_TEMP/image-audit:/input:ro" "$scanner" \
+            image --input /input/image.tar --scanners vuln --severity HIGH,CRITICAL --exit-code 1
+      - name: Upload runtime SBOM
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-sbom
+          path: ${{ runner.temp }}/runtime-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Validate Compose configuration and PostgreSQL pin
         run: |
           cp .env.example .env

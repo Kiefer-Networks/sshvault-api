@@ -199,6 +199,8 @@ paths:
                   format: email
                 password:
                   type: string
+                  x-maxBytes: 256
+                  description: Maximum 256 UTF-8 bytes. Longer inputs return the same 401 invalid credentials response as an incorrect password.
                 device_name:
                   type: string
       responses:

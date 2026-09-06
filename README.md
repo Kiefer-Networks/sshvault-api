@@ -630,7 +630,7 @@ The verification email links to `GET /v1/auth/verify-email?token=...`, a non-mut
 
 Verification, recovery, and email-change delivery each have a database-enforced 60-second cooldown per normalized recipient and purpose, shared across clients, IPs, and server processes. Only a recipient digest is stored in the budget table. At most one unused token exists per account and purpose. A throttled signup keeps the same opaque response, sends no mail, and preserves the existing viable link. Only an admitted resend after the cooldown replaces it.
 
-SMTP runs through a bounded queue (128 messages, two workers), so SMTP latency never blocks registration responses. Queue saturation and delivery failure preserve registration's opaque result; retry after the cooldown. Mail draining shares the single process shutdown deadline; SMTP observes cancellation and separate connection, command-I/O, and overall deadlines. Configured SMTP requires certificate-verified TLS 1.2 or newer: port 465 uses implicit TLS, and other ports require STARTTLS. No credentials or message content are sent before TLS succeeds. If SMTP credentials are configured, missing or rejected AUTH fails delivery; plaintext fallback is never used. Trusted certificates must match `SMTP_HOST`. Without `SMTP_HOST`, the development fallback logs the entire email, including activation and recovery links; do not use that mode on a production or shared system.
+SMTP runs through a bounded queue (128 messages, two workers), so SMTP latency never blocks registration responses. Queue saturation and delivery failure preserve registration's opaque result; retry after the cooldown. Mail draining shares the single process shutdown deadline; SMTP observes cancellation and separate connection, command-I/O, and overall deadlines. Configured SMTP requires certificate-verified TLS 1.2 or newer: port 465 uses implicit TLS, and other ports require STARTTLS. No credentials or message content are sent before TLS succeeds. If SMTP credentials are configured, missing or rejected AUTH fails delivery; plaintext fallback is never used. Trusted certificates must match `SMTP_HOST`. Without `SMTP_HOST`, the fallback discards messages and logs only a delivery-disabled warning; recipients, subjects, message bodies, and tokens are never logged. Configure a TLS-capable SMTP server for activation and recovery, including during local development.
 
 HTTP JSON errors and other JSON responses up to 64 KiB are padded to 1 KiB boundaries and remain uncompressed, including early `400`, `413`, and `429` rejections. CORS and security headers wrap these rejection paths. Opaque vault/history blobs stream as JSON with optional gzip; they are not padded. Larger general responses also bypass buffering after 64 KiB. Existing vaults above 15 MiB remain readable, exportable, and available in history; only new/replacement writes (including client imports through the write endpoint) use the 15 MiB ceiling. Requests must contain exactly one JSON value. Configure proxy request limits to **21,037,056 bytes** for the default Base64 JSON envelope; a decoded blob of 15,728,641 bytes returns `413` even when its wire body fits.
 
@@ -643,7 +643,7 @@ JWT signing keys are generated only when the configured path does not exist, pub
 Migration `023` explicitly marks pre-upgrade accounts as `verification_grandfathered`, including those whose `verified` value is false. Their existing sessions, login, and synchronization remain authorized. New accounts default to requiring verification; the migration does not rewrite actual mailbox verification status. Downgrade is refused while any new unverified account would lose that distinction; a later re-upgrade cannot silently grandfather it. Migration `024` removes the obsolete requester-password column from databases that applied an earlier draft, randomizes pending-account password placeholders, and preserves viable mailbox tokens. Its down migration restores only an empty compatibility column; discarded requester hashes are never restored. Deploy this code with all migrations applied.
 
 
-Login reserves each attempt atomically before password verification. Up to five pending or failed attempts per normalized email, and twenty per IP across accounts, are admitted within fifteen minutes. Successful authentication clears completed older failures while preserving pending and newer attempts. Cancelled requests remain charged until the window expires.
+Login rejects passwords above 256 UTF-8 bytes with the same generic `401` response as invalid credentials, before database access or Argon2 work. Login reserves each admitted attempt atomically before password verification. Up to five pending or failed attempts per normalized email, and twenty per IP across accounts, are admitted within fifteen minutes. Successful authentication clears completed older failures while preserving pending and newer attempts. Cancelled requests remain charged until the window expires.
 
 Refresh tokens rotate once within a persistent family. Reusing a consumed refresh token revokes every access and refresh session for that account. Clients must serialize refresh requests; concurrent reuse causes session revocation even when one rotation succeeds. Upgrading preserves live refresh tokens and assigns their family and current session version. Consumed family history stays until the last descendant expires. Migration 025 is forward-only because dropping this history would disable replay protection.
 
@@ -684,7 +684,7 @@ Key environment variables:
 | `JWT_ACCESS_TTL` | No | `15m` | Access token lifetime |
 | `JWT_REFRESH_TTL` | No | `720h` | Refresh token lifetime |
 | **Mail** | | | |
-| `SMTP_HOST` | Production | — | SMTP server; empty uses the development fallback that logs complete messages and one-time links |
+| `SMTP_HOST` | Production | — | SMTP server; empty discards messages and logs only a delivery-disabled warning |
 | `SMTP_PORT` | No | `587` | `465` uses implicit TLS; all other ports require STARTTLS |
 | `SMTP_USER` | No | — | SMTP username |
 | `SMTP_PASS` | No | — | SMTP password |
@@ -715,7 +715,7 @@ Key environment variables:
 ## Self-Hosted
 
 For self-hosted instances:
-- Configure `SMTP_HOST` before enabling registration, email changes, or password recovery. Leaving it empty logs complete email bodies and one-time links and is suitable only for isolated development.
+- Configure `SMTP_HOST` before enabling registration, email changes, or password recovery. Leaving it empty discards messages; no activation or recovery links are delivered or logged.
 - Vault payloads remain client-side encrypted; the server cannot read their plaintext
 - Set `TRUSTED_PROXIES` to match your reverse proxy's IP/network
 - **Never expose port 8080 directly to the internet** — always use a reverse proxy with TLS
@@ -762,6 +762,8 @@ For self-hosted instances:
 - `Referrer-Policy: no-referrer`
 - `Cache-Control: no-store`
 - `Permissions-Policy` disables camera, microphone, geolocation, Topics API
+
+The Docker CI job scans the built runtime image with Trivy and fails on HIGH or CRITICAL vulnerabilities. It also publishes a CycloneDX software bill of materials as the `runtime-sbom` artifact (30-day retention). Runtime packages receive available Alpine security updates during image builds. The server and backup containers drop all Linux capabilities.
 
 ## Related
 
