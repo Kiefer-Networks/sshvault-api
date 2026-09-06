@@ -19,6 +19,8 @@ type Logger struct {
 	ch      chan *Entry
 	done    chan struct{}
 	once    sync.Once
+	mu      sync.RWMutex
+	stopped bool
 	dropped atomic.Int64
 }
 
@@ -71,6 +73,11 @@ func (l *Logger) run() {
 // Log sends an entry to the async buffer. Non-blocking: drops the entry
 // if the buffer is full and increments the drop counter.
 func (l *Logger) Log(entry *Entry) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.stopped {
+		return
+	}
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
@@ -100,7 +107,10 @@ func (l *Logger) reportDropped() {
 // Stop drains the buffer and waits for all pending entries to be written.
 func (l *Logger) Stop() {
 	l.once.Do(func() {
+		l.mu.Lock()
+		l.stopped = true
 		close(l.ch)
+		l.mu.Unlock()
 		<-l.done
 	})
 }

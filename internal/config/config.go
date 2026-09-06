@@ -48,7 +48,7 @@ type SMTPConfig struct {
 }
 
 type VaultConfig struct {
-	MaxSizeMB    int `envconfig:"VAULT_MAX_SIZE_MB" default:"50"`
+	MaxSizeMB    int `envconfig:"VAULT_MAX_SIZE_MB" default:"75"`
 	HistoryLimit int `envconfig:"VAULT_HISTORY_LIMIT" default:"10"`
 }
 

@@ -246,7 +246,7 @@ api.example.com {
     # --- Request Size Limit ---
     # Limits the maximum request body size to prevent abuse:
     request_body {
-        max_size 10MB
+        max_size 106000000
     }
 
     # --- Route Filtering ---
@@ -268,8 +268,8 @@ api.example.com {
 
         # Uncomment to set upstream timeouts (prevents hanging connections):
         # transport http {
-        #     read_timeout 10s
-        #     write_timeout 15s
+        #     read_timeout 180s
+        #     write_timeout 180s
         #     dial_timeout 5s
         # }
     }
@@ -339,7 +339,7 @@ server {
 
     # --- Request Size Limit ---
     # Limits the maximum request body size to prevent abuse:
-    client_max_body_size 10M;
+    client_max_body_size 101M;
 
     # --- Reverse Proxy ---
     location / {
@@ -353,8 +353,8 @@ server {
 
         # Uncomment to set upstream timeouts (prevents hanging connections):
         # proxy_connect_timeout 5s;
-        # proxy_read_timeout 10s;
-        # proxy_send_timeout 15s;
+        # proxy_read_timeout 180s;
+        # proxy_send_timeout 180s;
     }
 
     # --- Logging ---
@@ -422,8 +422,8 @@ API_BASE_URL=https://api.example.com
     Header always unset X-Powered-By
 
     # --- Request Size Limit ---
-    # Limits the maximum request body size to prevent abuse (10 MB):
-    LimitRequestBody 10485760
+    # Limits the maximum request body size to allow a 75 MiB vault plus Base64/JSON overhead:
+    LimitRequestBody 105906176
 
     # --- Reverse Proxy ---
     # Required modules: mod_proxy, mod_proxy_http, mod_headers
@@ -607,7 +607,7 @@ Key environment variables:
 | `SMTP_PASS` | No | — | SMTP password |
 | `SMTP_FROM` | No | `noreply@example.com` | Sender address |
 | **Vault** | | | |
-| `VAULT_MAX_SIZE_MB` | No | `50` | Maximum vault blob size (MB) |
+| `VAULT_MAX_SIZE_MB` | No | `75` | Maximum decoded vault blob size (MiB) |
 | `VAULT_HISTORY_LIMIT` | No | `10` | Maximum stored vault versions |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_RPS` | No | `10` | Requests per second (global) |
@@ -648,8 +648,8 @@ For self-hosted instances:
 
 - Binds to `127.0.0.1:8080` by default (not reachable from outside)
 - Trusted proxy validation — `X-Forwarded-For` only accepted from configured CIDRs
-- Aggressive timeouts: 2s header read, 5s body read, 10s write, 30s idle
-- Request body limited to 10 MB, headers limited to 1 MB
+- Aggressive timeouts: 2s header read, 120s body read, 180s write, 30s idle
+- Vault uploads accept 75 MiB of decoded data (100 MiB Base64 plus 64 KiB JSON envelope); other request bodies remain limited to 10 MiB, headers to 1 MiB
 - Docker containers: `read_only`, `no-new-privileges`, non-root user
 - PostgreSQL port not exposed to host
 
