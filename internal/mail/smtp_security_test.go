@@ -64,7 +64,7 @@ func TestSMTPSecureProtocols(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer func() { _ = listener.Close() }()
 			type observation struct {
 				commands           []string
 				message            string
@@ -78,7 +78,7 @@ func TestSMTPSecureProtocols(t *testing.T) {
 				if err != nil {
 					return
 				}
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 				secure := false
 				upgrade := func() bool {
@@ -93,7 +93,7 @@ func TestSMTPSecureProtocols(t *testing.T) {
 				if tc.implicit && !upgrade() {
 					return
 				}
-				fmt.Fprint(conn, "220 localhost ESMTP\r\n")
+				_, _ = fmt.Fprint(conn, "220 localhost ESMTP\r\n")
 				reader := bufio.NewReader(conn)
 				for {
 					line, err := reader.ReadString('\n')
@@ -103,16 +103,16 @@ func TestSMTPSecureProtocols(t *testing.T) {
 					seen.commands = append(seen.commands, line)
 					switch {
 					case strings.HasPrefix(line, "EHLO"):
-						fmt.Fprint(conn, "250-localhost\r\n")
+						_, _ = fmt.Fprint(conn, "250-localhost\r\n")
 						if !secure {
-							fmt.Fprint(conn, "250-STARTTLS\r\n")
+							_, _ = fmt.Fprint(conn, "250-STARTTLS\r\n")
 						}
 						if secure && tc.advertiseAuth {
-							fmt.Fprint(conn, "250-AUTH PLAIN\r\n")
+							_, _ = fmt.Fprint(conn, "250-AUTH PLAIN\r\n")
 						}
-						fmt.Fprint(conn, "250 OK\r\n")
+						_, _ = fmt.Fprint(conn, "250 OK\r\n")
 					case strings.HasPrefix(line, "STARTTLS"):
-						fmt.Fprint(conn, "220 ready\r\n")
+						_, _ = fmt.Fprint(conn, "220 ready\r\n")
 						if tc.stallTLS {
 							_, _ = io.Copy(io.Discard, conn)
 							return
@@ -124,16 +124,16 @@ func TestSMTPSecureProtocols(t *testing.T) {
 					case strings.HasPrefix(line, "AUTH"):
 						seen.sensitiveBeforeTLS = seen.sensitiveBeforeTLS || !secure
 						if tc.rejectAuth {
-							fmt.Fprint(conn, "535 rejected\r\n")
+							_, _ = fmt.Fprint(conn, "535 rejected\r\n")
 						} else {
-							fmt.Fprint(conn, "235 authenticated\r\n")
+							_, _ = fmt.Fprint(conn, "235 authenticated\r\n")
 						}
 					case strings.HasPrefix(line, "MAIL"), strings.HasPrefix(line, "RCPT"):
 						seen.sensitiveBeforeTLS = seen.sensitiveBeforeTLS || !secure
-						fmt.Fprint(conn, "250 OK\r\n")
+						_, _ = fmt.Fprint(conn, "250 OK\r\n")
 					case strings.HasPrefix(line, "DATA"):
 						seen.sensitiveBeforeTLS = seen.sensitiveBeforeTLS || !secure
-						fmt.Fprint(conn, "354 continue\r\n")
+						_, _ = fmt.Fprint(conn, "354 continue\r\n")
 						for {
 							body, err := reader.ReadString('\n')
 							if err != nil {
@@ -144,12 +144,12 @@ func TestSMTPSecureProtocols(t *testing.T) {
 							}
 							seen.message += body
 						}
-						fmt.Fprint(conn, "250 queued\r\n")
+						_, _ = fmt.Fprint(conn, "250 queued\r\n")
 					case strings.HasPrefix(line, "QUIT"):
-						fmt.Fprint(conn, "221 bye\r\n")
+						_, _ = fmt.Fprint(conn, "221 bye\r\n")
 						return
 					default:
-						fmt.Fprint(conn, "500 unknown\r\n")
+						_, _ = fmt.Fprint(conn, "500 unknown\r\n")
 					}
 				}
 			}()

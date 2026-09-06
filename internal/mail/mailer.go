@@ -69,7 +69,7 @@ func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("connecting SMTP: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	deadline := time.Now().Add(m.timeouts.Overall)
 	if until, ok := ctx.Deadline(); ok && until.Before(deadline) {
 		deadline = until
@@ -92,7 +92,7 @@ func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("SMTP greeting: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if !m.implicitTLS {
 		if ok, _ := client.Extension("STARTTLS"); !ok {
 			return fmt.Errorf("SMTP requires STARTTLS")
@@ -159,13 +159,13 @@ func (c *commandDeadlineConn) deadline() time.Time {
 	return next
 }
 func (c *commandDeadlineConn) Read(p []byte) (int, error) {
-	if err := c.Conn.SetReadDeadline(c.deadline()); err != nil {
+	if err := c.SetReadDeadline(c.deadline()); err != nil {
 		return 0, err
 	}
 	return c.Conn.Read(p)
 }
 func (c *commandDeadlineConn) Write(p []byte) (int, error) {
-	if err := c.Conn.SetWriteDeadline(c.deadline()); err != nil {
+	if err := c.SetWriteDeadline(c.deadline()); err != nil {
 		return 0, err
 	}
 	return c.Conn.Write(p)

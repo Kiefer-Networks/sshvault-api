@@ -103,7 +103,9 @@ func TestRegistrationProductionMiddlewareTimingWithSlowSMTP(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,8 +182,13 @@ func TestEmailChangePreviewAndFormUseProductionMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") || !strings.Contains(string(body), `method="post"`) {
 		t.Fatalf("preview was not a confirmation form: %d %s", resp.StatusCode, body)
 	}
@@ -197,8 +204,13 @@ func TestEmailChangePreviewAndFormUseProductionMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != 200 {
 		t.Fatalf("explicit confirmation form rejected: %d %s", resp.StatusCode, body)
 	}
@@ -210,7 +222,9 @@ func TestEmailChangePreviewAndFormUseProductionMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	if err = resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != 400 {
 		t.Fatal("confirmation form replay accepted")
 	}
@@ -251,8 +265,13 @@ func TestActivationPreviewAndPasswordFormUseProductionMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != 200 || !strings.Contains(string(body), `name="new_password"`) {
 		t.Fatalf("password preview missing: %d", resp.StatusCode)
 	}
@@ -268,8 +287,13 @@ func TestActivationPreviewAndPasswordFormUseProductionMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != 200 {
 		t.Fatalf("password form rejected by production middleware: %d %s", resp.StatusCode, body)
 	}

@@ -33,12 +33,13 @@ func TestEarlyRejectionsHaveCORSAndUncompressedPadding(t *testing.T) {
 			}
 			req := request()
 			want := 413
-			if kind == "body" {
+			switch kind {
+			case "body":
 				req.ContentLength = 11 << 20
-			} else if kind == "rate" {
+			case "rate":
 				r.ServeHTTP(httptest.NewRecorder(), request())
 				want = 429
-			} else {
+			default:
 				req.Header.Set("X-Forwarded-For", "invalid")
 				want = 400
 			}

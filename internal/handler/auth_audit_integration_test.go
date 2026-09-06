@@ -18,7 +18,7 @@ func TestFailedAuthenticationAuditDoesNotStoreEmailOrIP(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			p := testutil.Database(t, 0)
 			logger := audit.NewLogger(audit.NewRepository(p), 8)
-			defer logger.Stop(context.Background())
+			defer func() { _, _ = logger.Stop(context.Background()) }()
 			svc := service.NewAuthService(nil, nil, nil, nil, nil, nil, nil)
 			h := NewAuthHandler(svc, logger)
 			const email = "private-person@example.com@invalid"
@@ -30,7 +30,7 @@ func TestFailedAuthenticationAuditDoesNotStoreEmailOrIP(t *testing.T) {
 			} else {
 				h.Register(rec, req)
 			}
-			logger.Stop(context.Background())
+			_, _ = logger.Stop(context.Background())
 			var actorEmail, ip string
 			var details []byte
 			if err := p.QueryRow(context.Background(), `SELECT actor_email,ip_address,details FROM audit_logs`).Scan(&actorEmail, &ip, &details); err != nil {

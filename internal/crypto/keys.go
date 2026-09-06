@@ -80,7 +80,7 @@ func SaveEd25519PrivateKey(path string, key ed25519.PrivateKey) error {
 	if err != nil {
 		return fmt.Errorf("creating key file: %w", err)
 	}
-	defer os.Remove(temporary.Name())
+	defer func() { _ = os.Remove(temporary.Name()) }()
 	if _, err = temporary.Write(encoded); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("writing key: %w", err)
@@ -101,9 +101,12 @@ func SaveEd25519PrivateKey(path string, key ed25519.PrivateKey) error {
 		if err != nil {
 			return err
 		}
-		defer dir.Close()
 		if err = dir.Sync(); err != nil {
+			_ = dir.Close()
 			return fmt.Errorf("syncing key directory: %w", err)
+		}
+		if err = dir.Close(); err != nil {
+			return fmt.Errorf("closing key directory: %w", err)
 		}
 	}
 	return nil

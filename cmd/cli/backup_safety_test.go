@@ -44,7 +44,12 @@ func confirmedRestore(t *testing.T, dsn, path string, override bool) func() erro
 	}
 	old := os.Stdin
 	os.Stdin = input
-	t.Cleanup(func() { os.Stdin = old; input.Close() })
+	t.Cleanup(func() {
+		os.Stdin = old
+		if err := input.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	cmd := backupRestoreCmd()
 	args := []string{path}
 	if override {
@@ -83,7 +88,7 @@ func TestSnapshotBoundManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Rollback(ctx)
+	defer func() { _ = gate.Rollback(context.Background()) }()
 	if _, err = gate.Exec(ctx, "LOCK TABLE refresh_tokens IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +252,7 @@ func TestRestoreSerializesConcurrentDeletion(t *testing.T) {
 	if _, err = gate.Exec(ctx, "SELECT pg_advisory_lock(56789)"); err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Exec(ctx, "SELECT pg_advisory_unlock(56789)")
+	defer func() { _, _ = gate.Exec(context.Background(), "SELECT pg_advisory_unlock(56789)") }()
 	path := gzipSQL(t, "SELECT pg_advisory_xact_lock(56789); UPDATE users SET deleted_at=NULL;")
 	run := confirmedRestore(t, dsn, path, true)
 	restored := make(chan error, 1)
@@ -291,7 +296,7 @@ func TestAccountMutationsWaitForMaintenance(t *testing.T) {
 			if _, err = gate.Exec(ctx, "SELECT pg_advisory_lock($1)", maintenanceTestKey); err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceTestKey)
+			defer func() { _, _ = gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceTestKey) }()
 			done := make(chan error, 1)
 			go func() {
 				var err error
@@ -326,7 +331,7 @@ func TestBackupProcessDoesNotExposeCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Rollback(ctx)
+	defer func() { _ = gate.Rollback(context.Background()) }()
 	if _, err = gate.Exec(ctx, "LOCK TABLE users IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +448,7 @@ func TestBackupWaitsForRestoreBeforeOpeningSnapshot(t *testing.T) {
 	if _, err = gate.Exec(ctx, "SELECT pg_advisory_lock($1)", maintenanceTestKey); err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Exec(ctx, "SELECT pg_advisory_unlock($1)", maintenanceTestKey)
+	defer func() { _, _ = gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceTestKey) }()
 	dir := t.TempDir()
 	done := make(chan error, 1)
 	var path string
@@ -483,7 +488,7 @@ func TestBackupSidecarFailurePublishesNoDump(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Rollback(ctx)
+	defer func() { _ = gate.Rollback(context.Background()) }()
 	if _, err = gate.Exec(ctx, "LOCK TABLE backup_gate IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}

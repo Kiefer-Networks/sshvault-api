@@ -85,7 +85,7 @@ func TestShutdownBudgetIncludesStuckHandlersAndCleanup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer func() { _ = listener.Close() }()
 			entered, release := make(chan struct{}), make(chan struct{})
 			defer close(release)
 			srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +110,7 @@ func TestShutdownBudgetIncludesStuckHandlersAndCleanup(t *testing.T) {
 				go func() {
 					resp, err := http.Get("http://" + listener.Addr().String())
 					if err == nil {
-						resp.Body.Close()
+						_ = resp.Body.Close()
 					}
 				}()
 				<-entered

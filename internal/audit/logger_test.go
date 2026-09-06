@@ -51,7 +51,9 @@ func TestLoggerBuffersAndSends(t *testing.T) {
 	l.Log(&Entry{Category: CatAuth, Action: ActLogin})
 	l.Log(&Entry{Category: CatVault, Action: ActSyncPush})
 
-	l.Stop(context.Background())
+	if _, err := l.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := mock.getEntries()
 	if len(entries) != 2 {
@@ -74,7 +76,7 @@ func TestLoggerBufferFull(t *testing.T) {
 		l.Log(&Entry{Category: CatAuth, Action: ActLogin})
 	}
 
-	l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
 
 	// We should have received some but likely not all 100
 	entries := mock.getEntries()
@@ -92,7 +94,7 @@ func TestLoggerStopDrains(t *testing.T) {
 		l.Log(&Entry{Category: CatSystem, Action: ActStartup})
 	}
 
-	l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 50 {
@@ -106,9 +108,9 @@ func TestLoggerStopIdempotent(t *testing.T) {
 	l.Log(&Entry{Category: CatSystem, Action: ActStartup})
 
 	// Multiple Stop calls should not panic
-	l.Stop(context.Background())
-	l.Stop(context.Background())
-	l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
 }
 
 func TestLogSetsTimestamp(t *testing.T) {
@@ -116,7 +118,7 @@ func TestLogSetsTimestamp(t *testing.T) {
 
 	before := time.Now()
 	l.Log(&Entry{Category: CatAuth, Action: ActLogin})
-	l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 1 {
@@ -145,7 +147,7 @@ func TestEntryBuilderSetsAllFields(t *testing.T) {
 		Duration(dur).
 		Send()
 
-	l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 1 {
@@ -200,7 +202,7 @@ func TestLogFromRequestExtractsContext(t *testing.T) {
 	r = r.WithContext(ctx)
 
 	l.LogFromRequest(r, CatVault, ActSyncPull).Send()
-	l.Stop(context.Background())
+	_, _ = l.Stop(context.Background())
 
 	entries := mock.getEntries()
 	if len(entries) != 1 {

@@ -56,7 +56,7 @@ func TestAuditInsertWaitsForMaintenanceBeforeTableLocks(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				defer tx.Rollback(context.Background())
+				defer func() { _ = tx.Rollback(context.Background()) }()
 				_, err = tx.Exec(ctx, `LOCK TABLE users, audit_logs IN ACCESS EXCLUSIVE MODE NOWAIT`)
 				return err
 			})

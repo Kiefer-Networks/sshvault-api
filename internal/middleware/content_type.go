@@ -16,7 +16,8 @@ func RequireJSONContentType(next http.Handler) http.Handler {
 			ct := r.Header.Get("Content-Type")
 			if ct != "" {
 				mt, _, _ := mime.ParseMediaType(ct)
-				if mt != "application/json" && !(r.Method == http.MethodPost && (r.URL.Path == "/v1/auth/confirm-email-change" || r.URL.Path == "/v1/auth/verify-email") && mt == "application/x-www-form-urlencoded") {
+				formConfirmation := r.Method == http.MethodPost && (r.URL.Path == "/v1/auth/confirm-email-change" || r.URL.Path == "/v1/auth/verify-email") && mt == "application/x-www-form-urlencoded"
+				if mt != "application/json" && !formConfirmation {
 					respondJSONError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 					return
 				}

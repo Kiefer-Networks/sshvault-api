@@ -28,7 +28,7 @@ func TestCLIHardDeleteAnonymizesOrRollsBack(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer input.Close()
+			defer func() { _ = input.Close() }()
 			if _, err = input.WriteString("yes\n"); err != nil {
 				t.Fatal(err)
 			}

@@ -26,7 +26,11 @@ func respondVault(w http.ResponseWriter, r *http.Request, v *service.VaultRespon
 	var out io.Writer = w
 	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
 		compressed := gzip.NewWriter(w)
-		defer compressed.Close()
+		defer func() {
+			if err := compressed.Close(); err != nil {
+				log.Error().Err(err).Msg("failed to finish compressed vault response")
+			}
+		}()
 		out = compressed
 		w.Header().Set("Content-Encoding", "gzip")
 	}

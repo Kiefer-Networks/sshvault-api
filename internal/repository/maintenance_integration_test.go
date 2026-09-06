@@ -29,7 +29,7 @@ func TestAccountCreationAndPurgeObserveMaintenance(t *testing.T) {
 			if _, err = gate.Exec(ctx, "SELECT pg_advisory_lock($1)", maintenanceLockKey); err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceLockKey)
+			defer func() { _, _ = gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceLockKey) }()
 			done := make(chan error, 1)
 			go func() {
 				r := NewUserRepository(p)
@@ -85,7 +85,7 @@ func TestStandaloneAccountFieldsObserveMaintenance(t *testing.T) {
 			if _, err = gate.Exec(ctx, "SELECT pg_advisory_lock($1)", maintenanceLockKey); err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceLockKey)
+			defer func() { _, _ = gate.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", maintenanceLockKey) }()
 			done := make(chan error, 1)
 			go func() {
 				r := NewUserRepository(p)

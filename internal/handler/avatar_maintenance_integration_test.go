@@ -32,7 +32,7 @@ func TestAvatarHandlersWaitForRestoreMaintenance(t *testing.T) {
 			if _, err = gate.Exec(ctx, "SELECT pg_advisory_lock(734862190201)"); err != nil {
 				t.Fatal(err)
 			}
-			defer gate.Exec(context.Background(), "SELECT pg_advisory_unlock(734862190201)")
+			defer func() { _, _ = gate.Exec(context.Background(), "SELECT pg_advisory_unlock(734862190201)") }()
 			avatar := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nimage"))
 			req := httptest.NewRequest(method, "/v1/me/avatar", strings.NewReader(`{"avatar":"`+avatar+`"}`)).WithContext(ctx)
 			req = userAuthedRequest(req, id)
@@ -67,7 +67,7 @@ func TestAvatarHandlersWaitForRestoreMaintenance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer tx.Rollback(context.Background())
+			defer func() { _ = tx.Rollback(context.Background()) }()
 			var got string
 			if err = tx.QueryRow(ctx, "SELECT avatar FROM users WHERE id=$1 FOR UPDATE NOWAIT", id).Scan(&got); err != nil {
 				t.Fatalf("avatar acquired user row lock before maintenance: %v", err)

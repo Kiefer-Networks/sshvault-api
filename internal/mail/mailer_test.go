@@ -15,7 +15,7 @@ func TestSMTPRejectsMissingSTARTTLSBeforeMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	commands := make(chan []string, 1)
 	go func() {
 		var seen []string
@@ -24,9 +24,9 @@ func TestSMTPRejectsMissingSTARTTLSBeforeMessage(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.SetDeadline(time.Now().Add(time.Second))
-		fmt.Fprint(conn, "220 localhost ESMTP\r\n")
+		_, _ = fmt.Fprint(conn, "220 localhost ESMTP\r\n")
 		reader := bufio.NewReader(conn)
 		for {
 			line, err := reader.ReadString('\n')
@@ -36,14 +36,14 @@ func TestSMTPRejectsMissingSTARTTLSBeforeMessage(t *testing.T) {
 			seen = append(seen, line)
 			switch {
 			case strings.HasPrefix(line, "EHLO"):
-				fmt.Fprint(conn, "250 localhost\r\n")
+				_, _ = fmt.Fprint(conn, "250 localhost\r\n")
 			case strings.HasPrefix(line, "DATA"):
-				fmt.Fprint(conn, "354 continue\r\n")
+				_, _ = fmt.Fprint(conn, "354 continue\r\n")
 			case strings.HasPrefix(line, "QUIT"):
-				fmt.Fprint(conn, "221 bye\r\n")
+				_, _ = fmt.Fprint(conn, "221 bye\r\n")
 				return
 			default:
-				fmt.Fprint(conn, "250 OK\r\n")
+				_, _ = fmt.Fprint(conn, "250 OK\r\n")
 			}
 		}
 	}()
@@ -63,7 +63,7 @@ func TestSMTPDeliveryCancellationClosesStalledConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
@@ -71,7 +71,7 @@ func TestSMTPDeliveryCancellationClosesStalledConnection(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		time.Sleep(350 * time.Millisecond)
 	}()
 	address := listener.Addr().(*net.TCPAddr)
@@ -93,7 +93,7 @@ func TestSMTPCommandTimeoutBoundsStalledGreeting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
@@ -101,7 +101,7 @@ func TestSMTPCommandTimeoutBoundsStalledGreeting(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		buffer := make([]byte, 1)
 		_, _ = conn.Read(buffer)
 	}()

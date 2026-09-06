@@ -23,7 +23,7 @@ func TestShutdownReportsBeforeReturningWithCleanupStillBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	release, cleanupDone := make(chan struct{}), make(chan struct{})
 	defer func() { close(release); <-cleanupDone }()
 	var reports atomic.Int32

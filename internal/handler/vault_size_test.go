@@ -36,7 +36,7 @@ func TestDecodedVault15MiBBoundaryReturns413BeforePersistence(t *testing.T) {
 	for _, size := range []int{15 << 20, (15 << 20) + 1} {
 		repo := &mockVaultRepo{}
 		logger := audit.NewNopLogger()
-		defer logger.Stop(context.Background())
+		defer func() { _, _ = logger.Stop(context.Background()) }()
 		h := NewVaultHandler(service.NewVaultService(repo, nil, 15, 10), nil, logger)
 		blob := make([]byte, size)
 		sum := sha256.Sum256(blob)
@@ -69,7 +69,7 @@ func TestOversizedLegacyVaultReadAvoidsFullJSONBuffer(t *testing.T) {
 	blob := make([]byte, 16<<20)
 	repo := &mockVaultRepo{vault: &model.Vault{Version: 7, Blob: blob, Checksum: "legacy"}}
 	logger := audit.NewNopLogger()
-	defer logger.Stop(context.Background())
+	defer func() { _, _ = logger.Stop(context.Background()) }()
 	svc := service.NewVaultService(repo, nil, 15, 10)
 	h := NewVaultHandler(svc, nil, logger)
 	if got, err := svc.GetVault(context.Background(), uuid.New()); err != nil || len(got.Blob) != len(blob) {
@@ -123,7 +123,7 @@ func TestStreamedVaultGzipAndIdentityRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer z.Close()
+				defer func() { _ = z.Close() }()
 				source = z
 			} else if w.Header().Get("Content-Encoding") != "" {
 				t.Fatal("gzip selected despite q=0")

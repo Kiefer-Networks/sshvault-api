@@ -221,7 +221,7 @@ func TestPurgeConcurrentActivationPreservesChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer activation.Rollback(context.Background())
+	defer func() { _ = activation.Rollback(context.Background()) }()
 	if _, err = activation.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, uid); err != nil {
 		t.Fatal(err)
 	}
