@@ -275,7 +275,7 @@ func main() {
 	})
 
 	// Middleware
-	authMiddleware := mw.NewAuthMiddleware(jwtManager)
+	authMiddleware := mw.NewAuthMiddleware(jwtManager, userRepo)
 	rateLimiter := mw.NewRateLimiter(cfg.Rate.RPS, cfg.Rate.Burst)
 	authRateLimiter := mw.StrictAuthLimit()
 

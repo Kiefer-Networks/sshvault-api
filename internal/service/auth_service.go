@@ -193,17 +193,35 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		rawToken := uuid.New().String()
 		hash := auth.HashToken(rawToken)
 
-		vt := &repository.VerificationToken{
-			UserID:    user.ID,
-			TokenHash: hash,
-			Kind:      repository.TokenKindEmailVerify,
-			ExpiresAt: time.Now().Add(24 * time.Hour),
-		}
-		if err := s.verifyRepo.Create(ctx, vt); err != nil {
+		issued := false
+		err := s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+			current, err := s.userRepo.GetByIDForUpdate(txCtx, user.ID)
+			if err != nil {
+				return err
+			}
+			if current == nil || current.Email != req.Email {
+				return nil
+			}
+			token := &repository.VerificationToken{
+				UserID:    user.ID,
+				TokenHash: hash,
+				Kind:      repository.TokenKindEmailVerify,
+				ExpiresAt: time.Now().Add(24 * time.Hour),
+			}
+			if err := s.verifyRepo.Create(txCtx, token); err != nil {
+				return err
+			}
+			issued = true
+			return nil
+		})
+		if err != nil {
 			log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to store verification token")
-		} else if err := s.mailer.SendVerificationEmail(ctx, user.Email, rawToken); err != nil {
-			log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to send verification email")
+		} else if issued {
+			if err := s.mailer.SendVerificationEmail(ctx, req.Email, rawToken); err != nil {
+				log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to send verification email")
+			}
 		}
+
 	}
 
 	return s.issueTokenPair(ctx, user, "")
