@@ -21,6 +21,9 @@ func TestAuditStopBoundsNeverReturningRepositoryAndReportsUnconfirmed(t *testing
 	<-writer.entered
 	logger.Log(&Entry{Category: CatSystem})
 	logger.Log(&Entry{Category: CatSystem})
+	if n := logger.Unconfirmed(); n != 3 {
+		t.Fatalf("snapshot while repository is blocked = %d, want 3", n)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -32,4 +35,7 @@ func TestAuditStopBoundsNeverReturningRepositoryAndReportsUnconfirmed(t *testing
 		t.Fatal("audit drain exceeded its total deadline")
 	}
 	logger.Log(&Entry{Category: CatSystem})
+	if n := logger.Unconfirmed(); n != 4 {
+		t.Fatalf("snapshot after rejected entry = %d, want 4", n)
+	}
 }

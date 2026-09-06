@@ -104,7 +104,7 @@ func TestShutdownBudgetIncludesStuckHandlersAndCleanup(t *testing.T) {
 						<-release
 					}
 					return nil
-				}, 60*time.Millisecond)
+				}, 60*time.Millisecond, nil)
 			}()
 			if stuckHandler {
 				go func() {

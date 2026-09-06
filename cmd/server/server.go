@@ -12,9 +12,15 @@ import (
 // serveHTTP uses one total deadline across graceful drain, forced close, and
 // cleanup. Misbehaving handlers or cleanup cannot prevent process return.
 func serveHTTP(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func(context.Context) error) error {
-	return serveHTTPWithTimeout(ctx, srv, listener, cleanup, 30*time.Second)
+	return serveHTTPWithTimeout(ctx, srv, listener, cleanup, 30*time.Second, nil)
 }
-func serveHTTPWithTimeout(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func(context.Context) error, timeout time.Duration) error {
+func serveHTTPWithTimeout(ctx context.Context, srv *http.Server, listener net.Listener, cleanup func(context.Context) error, timeout time.Duration, finalReport func()) error {
+	// Snapshot on the returning goroutine: cleanup may still be blocked when
+	// the deadline expires, and main can exit immediately after this return.
+	// The reporter must only read counters and emit the final diagnostic.
+	if finalReport != nil {
+		defer finalReport()
+	}
 	result := make(chan error, 1)
 	go func() { result <- srv.Serve(listener) }()
 	var serveErr error

@@ -368,22 +368,9 @@ func main() {
 		authRateLimiter.Stop()
 		auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActShutdown})
 		err := runCleanup(stopCtx,
+			mailService.Stop,
 			func(ctx context.Context) error {
-				err := mailService.Stop(ctx)
-				if n := mailService.Unconfirmed(); n > 0 {
-					log.Warn().Int64("unconfirmed_messages", n).Msg("mail messages not confirmed delivered at shutdown")
-				}
-				if err != nil {
-					log.Warn().Msg("mail delivery stopped at shutdown deadline")
-					return err
-				}
-				return nil
-			},
-			func(ctx context.Context) error {
-				n, err := auditLogger.Stop(ctx)
-				if n > 0 {
-					log.Error().Int64("unconfirmed_entries", n).Msg("audit entries not confirmed written at shutdown")
-				}
+				_, err := auditLogger.Stop(ctx)
 				return err
 			},
 			func(context.Context) error { bgWg.Wait(); return nil },
@@ -394,18 +381,20 @@ func main() {
 		poolErr := runCleanup(stopCtx, func(context.Context) error { pool.Close(); return nil })
 		return errors.Join(err, poolErr)
 	}
+	reportShutdown := func() { reportShutdownLosses(log.Logger, auditLogger, mailService) }
 
 	listener, err := net.Listen("tcp", cfg.Server.Addr)
 	if err != nil {
 		stopCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		_ = cleanup(stopCtx)
 		cancel()
+		reportShutdown()
 		log.Fatal().Err(err).Msg("failed to listen")
 	}
 
 	auditLogger.Log(&audit.Entry{Category: audit.CatSystem, Action: audit.ActStartup, Details: map[string]any{"addr": cfg.Server.Addr}})
 	log.Info().Str("addr", cfg.Server.Addr).Msg("server listening")
-	if err := serveHTTPWithTimeout(shutdownCtx, srv, listener, cleanup, cfg.Server.ShutdownTimeout); err != nil {
+	if err := serveHTTPWithTimeout(shutdownCtx, srv, listener, cleanup, cfg.Server.ShutdownTimeout, reportShutdown); err != nil {
 		log.Fatal().Err(err).Msg("server stopped with error")
 	}
 

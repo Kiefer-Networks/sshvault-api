@@ -130,16 +130,20 @@ func (l *Logger) Stop(ctx context.Context) (int64, error) {
 	select {
 	case <-l.done:
 		l.cancel()
-		n := l.unsaved.Load() + l.lost.Load()
+		n := l.Unconfirmed()
 		if n > 0 {
 			return n, fmt.Errorf("%d audit entries were not confirmed written", n)
 		}
 		return 0, nil
 	case <-ctx.Done():
 		l.cancel()
-		return l.unsaved.Load() + l.lost.Load(), ctx.Err()
+		return l.Unconfirmed(), ctx.Err()
 	}
 }
+
+// Unconfirmed snapshots accepted entries without confirmed persistence and
+// dropped entries, without waiting for Stop or an in-flight repository call.
+func (l *Logger) Unconfirmed() int64 { return l.unsaved.Load() + l.lost.Load() }
 
 // EntryBuilder provides a fluent API for constructing audit entries.
 type EntryBuilder struct {
