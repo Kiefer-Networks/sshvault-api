@@ -175,7 +175,7 @@ func (s *VaultService) PutVault(ctx context.Context, userID uuid.UUID, req *PutV
 }
 
 func (s *VaultService) GetHistory(ctx context.Context, userID uuid.UUID) ([]VaultHistoryEntry, error) {
-	vault, err := s.vaultRepo.GetByUserID(ctx, userID)
+	vault, err := s.vaultRepo.GetMetadataByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("getting vault: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *VaultService) GetHistory(ctx context.Context, userID uuid.UUID) ([]Vaul
 }
 
 func (s *VaultService) GetHistoryVersion(ctx context.Context, userID uuid.UUID, version int) (*VaultResponse, error) {
-	vault, err := s.vaultRepo.GetByUserID(ctx, userID)
+	vault, err := s.vaultRepo.GetMetadataByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("getting vault: %w", err)
 	}

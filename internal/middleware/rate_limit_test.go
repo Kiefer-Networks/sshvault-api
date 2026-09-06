@@ -2,9 +2,13 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"golang.org/x/time/rate"
 )
 
 func TestRateLimiterAllowsWithinBurst(t *testing.T) {
@@ -193,5 +197,21 @@ func TestRateLimiterStopIsIdempotentAndJoinsWorker(t *testing.T) {
 	r.Stop()
 	if err := r.Wait(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRateLimiterRejectsNewVisitorAtCapacityWithoutAdmissionCleanup(t *testing.T) {
+	r := NewRateLimiter(1, 1)
+	defer r.Stop()
+	stale := time.Now().Add(-time.Hour)
+	for i := range maxVisitors {
+		r.visitors[fmt.Sprintf("2001:db8::%x", i)] = &visitor{limiter: rate.NewLimiter(1, 1), lastSeen: stale}
+	}
+
+	if limiter, ok := r.getVisitor("2001:db8:1::1"); ok || limiter != nil {
+		t.Fatal("new visitor admitted while limiter was at capacity")
+	}
+	if len(r.visitors) != maxVisitors {
+		t.Fatalf("capacity admission performed an unbounded cleanup: visitors=%d", len(r.visitors))
 	}
 }

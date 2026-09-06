@@ -12,6 +12,7 @@ var ErrVaultExists = errors.New("vault already exists")
 
 type VaultRepository interface {
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.Vault, error)
+	GetMetadataByUserID(ctx context.Context, userID uuid.UUID) (*model.Vault, error)
 	Create(ctx context.Context, vault *model.Vault) error
 	UpdateBlob(ctx context.Context, userID uuid.UUID, expectedVersion int, blob []byte, checksum string) (*model.Vault, error)
 

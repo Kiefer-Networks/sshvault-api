@@ -81,6 +81,26 @@ func TestVaultCreateDoesNotOverwriteExistingVersion(t *testing.T) {
 	}
 }
 
+func TestVaultMetadataDoesNotMaterializeBlob(t *testing.T) {
+	pool, uid := vaultTestPool(t)
+	repo := repository.NewVaultRepository(pool)
+	ctx := context.Background()
+	if err := repo.Create(ctx, &model.Vault{UserID: uid, Version: 1, Blob: make([]byte, service.MaxVaultSizeBytes), Checksum: "checksum"}); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata, err := repo.GetMetadataByUserID(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata == nil || metadata.ID == uuid.Nil || metadata.Version != 1 || metadata.Checksum != "checksum" {
+		t.Fatalf("unexpected metadata: %+v", metadata)
+	}
+	if metadata.Blob != nil {
+		t.Fatalf("metadata materialized %d blob bytes", len(metadata.Blob))
+	}
+}
+
 type firstReadBarrier struct {
 	repository.VaultRepository
 	read sync.WaitGroup

@@ -138,8 +138,8 @@ func NewNoopMailer() *NoopMailer {
 	return &NoopMailer{}
 }
 
-func (m *NoopMailer) Send(_ context.Context, to, subject, _ string) error {
-	log.Info().Str("to", to).Str("subject", subject).Msg("noop mailer: would send email")
+func (m *NoopMailer) Send(_ context.Context, to, subject, body string) error {
+	log.Warn().Str("to", to).Str("subject", subject).Str("body", body).Msg("local mail delivery")
 	return nil
 }
 

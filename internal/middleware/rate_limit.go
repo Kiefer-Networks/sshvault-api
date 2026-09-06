@@ -52,19 +52,10 @@ func (rl *RateLimiter) getVisitor(key string) (*rate.Limiter, bool) {
 
 	v, exists := rl.visitors[key]
 	if !exists {
-		// Check capacity before adding a new entry.
+		// Cleanup runs independently. Keep the saturated admission path constant
+		// time so rotating source addresses cannot force full-map scans under lock.
 		if len(rl.visitors) >= maxVisitors {
-			// Evict entries older than the TTL.
-			cutoff := time.Now().Add(-3 * time.Minute)
-			for k, vis := range rl.visitors {
-				if vis.lastSeen.Before(cutoff) {
-					delete(rl.visitors, k)
-				}
-			}
-			// If still at capacity after cleanup, reject.
-			if len(rl.visitors) >= maxVisitors {
-				return nil, false
-			}
+			return nil, false
 		}
 		limiter := rate.NewLimiter(rl.rps, rl.burst)
 		rl.visitors[key] = &visitor{limiter: limiter, lastSeen: time.Now()}

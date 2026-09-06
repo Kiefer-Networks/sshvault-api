@@ -137,9 +137,9 @@ $COMPOSE exec server ./sshvault-cli user delete user@example.com
 $COMPOSE exec server ./sshvault-cli user delete user@example.com --hard
 
 # Database backups (manual)
-$COMPOSE exec server ./sshvault-cli backup create
-$COMPOSE exec server ./sshvault-cli backup list
-$COMPOSE exec server ./sshvault-cli backup restore /app/backups/sshvault_20260304_120000.sql.gz
+$COMPOSE exec backup ./sshvault-cli backup create
+$COMPOSE exec backup ./sshvault-cli backup list
+$COMPOSE exec backup ./sshvault-cli backup restore /app/backups/sshvault_20260304_120000.sql.gz
 ```
 
 ### Automatic Backups
@@ -505,6 +505,8 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    networks:
+      - proxy
     # Uncomment to add security headers via middleware labels:
     # labels:
     #   # Forces HTTPS for 2 years, including subdomains:
@@ -677,7 +679,7 @@ Key environment variables:
 ## Self-Hosted
 
 For self-hosted instances:
-- Leave `SMTP_HOST` empty → emails logged to stdout
+- Leave `SMTP_HOST` empty to deliver email bodies through stdout. Activation and password-reset links are included, so restrict access to these logs and configure SMTP for internet-facing installations.
 - All data remains encrypted — the server cannot read vault contents
 - Set `TRUSTED_PROXIES` to match your reverse proxy's IP/network
 - **Never expose port 8080 directly to the internet** — always use a reverse proxy with TLS
