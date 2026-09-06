@@ -15,8 +15,8 @@ import (
 // --- Mock Repositories for UserService Tests ---
 
 type userSvcMockUserRepo struct {
-	users      map[uuid.UUID]*model.User
-	emailIndex map[string]*model.User
+	users         map[uuid.UUID]*model.User
+	emailIndex    map[string]*model.User
 	getByIDErr    error
 	getByEmailErr error
 	updateErr     error
