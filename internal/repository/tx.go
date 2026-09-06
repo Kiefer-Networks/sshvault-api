@@ -44,6 +44,11 @@ func (t *Transactor) WithTransaction(ctx context.Context, fn func(ctx context.Co
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Acquire before callbacks can lock users or token rows. Nested operations
+	// inherit this lock and must never try to acquire it after a user row lock.
+	if err := LockAccountMutation(ctx, tx); err != nil {
+		return err
+	}
 
 	txCtx := context.WithValue(ctx, ctxTxKey{}, tx)
 	if err := fn(txCtx); err != nil {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,5 +231,51 @@ func TestBackupFailsWhenManifestCannotBeCaptured(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatal("failed manifest left a backup advertised as usable")
+	}
+}
+func createBackup(databaseURL, dir string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	staged, err := dumpBackup(ctx, databaseURL, dir, "")
+	if err != nil {
+		return "", err
+	}
+	final := strings.TrimSuffix(staged, ".partial")
+	if err := os.Rename(staged, final); err != nil {
+		_ = os.Remove(staged)
+		return "", err
+	}
+	return final, nil
+}
+
+// Validate the complete compressed stream before opening a database transaction.
+// Staging on disk also prevents decompression errors from committing partial SQL.
+func restoreBackup(databaseURL, file string, manifest *restoreManifest) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	return restoreBackupContext(ctx, databaseURL, file, manifest)
+}
+
+func TestBackupRestoreKeywordConnectionString(t *testing.T) {
+	p, dsn := backupTestDB(t)
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := func(s string) string {
+		return "'" + strings.ReplaceAll(strings.ReplaceAll(s, "\\", "\\\\"), "'", "\\'") + "'"
+	}
+	keyword := "host=" + quote(cfg.Host) + " port=" + strconv.Itoa(int(cfg.Port)) + " user=" + quote(cfg.User) + " password=" + quote(cfg.Password) + " dbname=" + quote(cfg.Database) + " sslmode=disable"
+	execSQL(t, p, "CREATE TABLE sample(value text); INSERT INTO sample VALUES('saved')")
+	path, err := createBackup(keyword, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	execSQL(t, p, "UPDATE sample SET value='changed'")
+	if err = restoreBackup(keyword, path, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := value(t, p); got != "saved" {
+		t.Fatalf("keyword-DSN restore returned %q", got)
 	}
 }

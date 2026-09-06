@@ -33,12 +33,14 @@ func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
-	_, err := conn(ctx, r.pool).Exec(ctx, query,
-		user.ID, user.Email, user.Password, user.Verified, user.Avatar, user.CreatedAt, user.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("creating user: %w", err)
-	}
-	return nil
+	return NewTransactor(r.pool).WithTransaction(ctx, func(txCtx context.Context) error {
+		_, err := conn(txCtx, r.pool).Exec(txCtx, query,
+			user.ID, user.Email, user.Password, user.Verified, user.Avatar, user.CreatedAt, user.UpdatedAt)
+		if err != nil {
+			return fmt.Errorf("creating user: %w", err)
+		}
+		return nil
+	})
 }
 
 func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
@@ -155,12 +157,13 @@ func (r *pgUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *pgUserRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	query := `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`
-	_, err := conn(ctx, r.pool).Exec(ctx, query, time.Now(), id)
-	if err != nil {
-		return fmt.Errorf("soft deleting user: %w", err)
-	}
-	return nil
+	return NewTransactor(r.pool).WithTransaction(ctx, func(txCtx context.Context) error {
+		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`, time.Now(), id)
+		if err != nil {
+			return fmt.Errorf("soft deleting user: %w", err)
+		}
+		return nil
+	})
 }
 
 // PurgeDeleted returns only IDs whose anonymization and deletion committed.
@@ -180,6 +183,9 @@ func (r *pgUserRepo) deleteUsers(ctx context.Context, selection string, arg any)
 		return nil, fmt.Errorf("beginning purge transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := LockAccountMutation(ctx, tx); err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(ctx, selection, arg)
 	if err != nil {
 		return nil, fmt.Errorf("locking purge candidates: %w", err)

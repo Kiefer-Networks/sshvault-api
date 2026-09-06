@@ -3,15 +3,17 @@ package main
 import (
 	"compress/gzip"
 	"context"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 	"github.com/spf13/cobra"
 
 	"github.com/kiefernetworks/shellvault-server/internal/config"
@@ -80,26 +82,26 @@ func backupRestoreCmd() *cobra.Command {
 				return nil
 			}
 
-			ctx := context.Background()
-
-			manifest := &restoreManifest{}
-			if !skipReconcile {
-				manifest, err = captureManifest(ctx, pool)
-				if err != nil {
-					return fmt.Errorf("pre-restore manifest: %w", err)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
+			defer cancel()
+			err = repository.WithExclusiveMaintenance(ctx, pool, func(connection *pgx.Conn) error {
+				manifest := &restoreManifest{}
+				if !skipReconcile {
+					bm, err := loadManifestFile(strings.TrimSuffix(file, ".sql.gz") + ".manifest.json")
+					if err != nil {
+						return fmt.Errorf("backup manifest (use --no-reconcile only to explicitly override): %w", err)
+					}
+					live, err := captureManifest(ctx, connection)
+					if err != nil {
+						return fmt.Errorf("pre-restore manifest: %w", err)
+					}
+					manifest = mergeManifests(live, bm)
+					manifest.FormatVersion, manifest.DumpSHA256 = bm.FormatVersion, bm.DumpSHA256
 				}
-				manifestPath := strings.TrimSuffix(file, ".sql.gz") + ".manifest.json"
-				bm, loadErr := loadManifestFile(manifestPath)
-				if loadErr == nil {
-					manifest = mergeManifests(manifest, bm)
-				} else if !errors.Is(loadErr, os.ErrNotExist) {
-					return fmt.Errorf("backup manifest: %w", loadErr)
-				} else {
-					fmt.Println("No backup manifest found; preserving retained pre-restore tombstones only.")
-				}
-			}
-			// Reconciliation executes before COMMIT, so any error rolls back the restore.
-			if err := restoreBackup(cfg.Database.URL, file, manifest); err != nil {
+				// The exclusive lock survives until psql commits reconciliation.
+				return restoreBackupContext(ctx, cfg.Database.URL, file, manifest)
+			})
+			if err != nil {
 				return err
 			}
 			fmt.Println("Restore complete. All restored access sessions, refresh tokens and verification tokens invalidated.")
@@ -204,11 +206,12 @@ func backupAutoCmd() *cobra.Command {
 // BACKUP HELPERS
 // ============================================================
 
-func createBackup(databaseURL, dir string) (path string, err error) {
+// A staged dump is never listed or pruned as a completed backup.
+func dumpBackup(ctx context.Context, databaseURL, dir, snapshot string) (path string, err error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("creating backup dir: %w", err)
 	}
-	out, err := os.CreateTemp(dir, "sshvault_"+time.Now().Format("20060102_150405")+"_*.sql.gz")
+	out, err := os.CreateTemp(dir, "sshvault_"+time.Now().Format("20060102_150405")+"_*.sql.gz.partial")
 	if err != nil {
 		return "", fmt.Errorf("creating backup file: %w", err)
 	}
@@ -219,19 +222,26 @@ func createBackup(databaseURL, dir string) (path string, err error) {
 			_ = os.Remove(out.Name())
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 	compressed := gzip.NewWriter(out)
-	dump := exec.CommandContext(ctx, "pg_dump", "--clean", "--if-exists", "--no-owner", "--no-acl", databaseURL)
+	args := []string{"--clean", "--if-exists", "--no-owner", "--no-acl"}
+	if snapshot != "" {
+		args = append(args, "--snapshot", snapshot)
+	}
+	dump, err := postgresCommand(ctx, "pg_dump", databaseURL, args...)
+	if err != nil {
+		_ = compressed.Close()
+		return "", err
+	}
 	dump.Stdout = compressed
-	var stderr strings.Builder
-	dump.Stderr = &stderr
 	if err = dump.Run(); err != nil {
 		_ = compressed.Close()
-		return "", fmt.Errorf("pg_dump failed: %w\n%s", err, stderr.String())
+		return "", fmt.Errorf("pg_dump failed: %w", err)
 	}
 	if err = compressed.Close(); err != nil {
 		return "", fmt.Errorf("compressing backup: %w", err)
+	}
+	if err = out.Sync(); err != nil {
+		return "", fmt.Errorf("flushing backup: %w", err)
 	}
 	if err = out.Close(); err != nil {
 		return "", fmt.Errorf("closing backup: %w", err)
@@ -240,32 +250,83 @@ func createBackup(databaseURL, dir string) (path string, err error) {
 }
 
 func createBackupWithManifest(databaseURL, dir string) (string, error) {
-	manifest, err := captureManifest(context.Background(), pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	var path string
+	err := repository.WithSharedMaintenance(ctx, pool, func(connection *pgx.Conn) error {
+		var err error
+		path, err = createSnapshotBackup(ctx, connection, databaseURL, dir)
+		return err
+	})
+	return path, err
+}
+
+func createSnapshotBackup(ctx context.Context, connection *pgx.Conn, databaseURL, dir string) (string, error) {
+	tx, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	var snapshot string
+	if err = tx.QueryRow(ctx, "SELECT pg_export_snapshot()").Scan(&snapshot); err != nil {
+		return "", fmt.Errorf("exporting backup snapshot: %w", err)
+	}
+	manifest, err := captureManifest(ctx, tx)
 	if err != nil {
 		return "", fmt.Errorf("capturing backup manifest: %w", err)
 	}
-	path, err := createBackup(databaseURL, dir)
+	staged, err := dumpBackup(ctx, databaseURL, dir, snapshot)
 	if err != nil {
 		return "", err
 	}
-	manifestPath := strings.TrimSuffix(path, ".sql.gz") + ".manifest.json"
-	if err := writeManifestFile(manifest, manifestPath); err != nil {
-		_ = os.Remove(path)
-		_ = os.Remove(manifestPath)
+	defer func() { _ = os.Remove(staged) }()
+	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
-	return path, nil
+	manifest.FormatVersion = 1
+	manifest.DumpSHA256, err = backupDigest(staged)
+	if err != nil {
+		return "", err
+	}
+	final := strings.TrimSuffix(staged, ".partial")
+	sidecar := strings.TrimSuffix(final, ".sql.gz") + ".manifest.json"
+	stagedSidecar := sidecar + ".partial"
+	defer func() { _ = os.Remove(stagedSidecar) }()
+	if err := writeManifestFile(manifest, stagedSidecar); err != nil {
+		return "", err
+	}
+	// Publish the sidecar first: a visible .sql.gz always has its durable sidecar.
+	if err := os.Rename(stagedSidecar, sidecar); err != nil {
+		return "", err
+	}
+	if err := os.Rename(staged, final); err != nil {
+		_ = os.Remove(sidecar)
+		return "", err
+	}
+	return final, nil
 }
 
-// Validate the complete compressed stream before opening a database transaction.
-// Staging on disk also prevents decompression errors from committing partial SQL.
-func restoreBackup(databaseURL, file string, manifest *restoreManifest) error {
+func backupDigest(path string) (string, error) {
+	input, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = input.Close() }()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, input); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func restoreBackupContext(ctx context.Context, databaseURL, file string, manifest *restoreManifest) error {
 	input, err := os.Open(file)
 	if err != nil {
 		return fmt.Errorf("opening backup: %w", err)
 	}
 	defer func() { _ = input.Close() }()
-	compressed, err := gzip.NewReader(input)
+	hash := sha256.New()
+	compressed, err := gzip.NewReader(io.TeeReader(input, hash))
 	if err != nil {
 		return fmt.Errorf("opening compressed backup: %w", err)
 	}
@@ -282,6 +343,11 @@ func restoreBackup(databaseURL, file string, manifest *restoreManifest) error {
 	if size == 0 {
 		return fmt.Errorf("backup SQL is empty")
 	}
+	// Hash exactly the compressed bytes staged for psql, avoiding a verify/reopen
+	// race if the backup path changes while restore is being prepared.
+	if manifest != nil && manifest.FormatVersion != 0 && hex.EncodeToString(hash.Sum(nil)) != manifest.DumpSHA256 {
+		return fmt.Errorf("backup digest does not match manifest (use --no-reconcile only to explicitly override)")
+	}
 	if manifest != nil {
 		if err := appendManifestSQL(staged, manifest); err != nil {
 			return err
@@ -290,14 +356,13 @@ func restoreBackup(databaseURL, file string, manifest *restoreManifest) error {
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	psql := exec.CommandContext(ctx, "psql", "-X", "--set=ON_ERROR_STOP=on", "--single-transaction", "--file=-", databaseURL)
+	psql, err := postgresCommand(ctx, "psql", databaseURL, "-X", "--set=ON_ERROR_STOP=on", "--single-transaction", "--file=-")
+	if err != nil {
+		return err
+	}
 	psql.Stdin = staged
-	var stderr strings.Builder
-	psql.Stderr = &stderr
 	if err := psql.Run(); err != nil {
-		return fmt.Errorf("psql restore failed: %w\n%s", err, stderr.String())
+		return fmt.Errorf("psql restore failed: %w", err)
 	}
 	return nil
 }

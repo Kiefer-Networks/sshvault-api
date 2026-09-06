@@ -194,6 +194,10 @@ make build-cli
 | `backup restore <file> [--no-reconcile]` | Restore database with post-restore reconciliation |
 | `backup auto` | Start backup daemon (reads interval from ENV) |
 
+Keep each `.sql.gz` dump together with its `.manifest.json` sidecar. Both are captured from one PostgreSQL snapshot; the versioned sidecar contains the dump's SHA-256 digest. Restore rejects missing, legacy, or mismatched sidecars before changing the database. Temporary `.partial` files are incomplete backups and are not listed or retained as completed backups.
+
+Restore pauses account mutations and other restores with a database maintenance lock, captures retained deletions after acquiring that lock, and preserves the latest deletion timestamp during reconciliation. All restored sessions and verification tokens are invalidated in the restore transaction. The explicit `--no-reconcile` override permits old or unbound backups and skips deleted-account preservation; it still invalidates tokens and holds the maintenance lock. Server and CLI processes must run the updated code to participate in this coordination.
+
 ## Reverse Proxy Setup
 
 The server does not handle TLS itself. You **must** place a reverse proxy in front of it. Below are production-ready configurations for Caddy, Nginx, Apache, and Traefik.

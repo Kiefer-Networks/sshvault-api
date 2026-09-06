@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
 func updateUserSessions(ctx context.Context, userID uuid.UUID, state string) (int64, error) {
@@ -24,6 +25,9 @@ func updateUserSessions(ctx context.Context, userID uuid.UUID, state string) (in
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := repository.LockAccountMutation(ctx, tx); err != nil {
+		return 0, err
+	}
 	result, err := tx.Exec(ctx, query, userID)
 	if err != nil {
 		return 0, err

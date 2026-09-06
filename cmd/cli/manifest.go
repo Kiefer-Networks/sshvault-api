@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
 // ============================================================
@@ -19,6 +20,8 @@ import (
 // ============================================================
 
 type restoreManifest struct {
+	FormatVersion     int            `json:"format_version"`
+	DumpSHA256        string         `json:"dump_sha256"`
 	CreatedAt         time.Time      `json:"created_at"`
 	DeletedUsers      []manifestUser `json:"deleted_users"`
 	RevokedTokenCount int            `json:"revoked_token_count"`
@@ -34,7 +37,7 @@ type manifestUser struct {
 // MANIFEST HELPERS
 // ============================================================
 
-func captureManifest(ctx context.Context, p *pgxpool.Pool) (*restoreManifest, error) {
+func captureManifest(ctx context.Context, p repository.Querier) (*restoreManifest, error) {
 	m := &restoreManifest{CreatedAt: time.Now()}
 
 	// Deleted users
@@ -70,10 +73,18 @@ func writeManifestFile(m *restoreManifest, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling manifest: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
 		return fmt.Errorf("writing manifest: %w", err)
 	}
-	return nil
+	defer func() { _ = f.Close() }()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func loadManifestFile(path string) (*restoreManifest, error) {
@@ -88,6 +99,10 @@ func loadManifestFile(path string) (*restoreManifest, error) {
 	if m.CreatedAt.IsZero() || m.RevokedTokenCount < 0 {
 		return nil, fmt.Errorf("invalid manifest metadata")
 	}
+	digest, err := hex.DecodeString(m.DumpSHA256)
+	if m.FormatVersion != 1 || err != nil || len(digest) != 32 {
+		return nil, fmt.Errorf("manifest requires format version 1 and a SHA-256 dump digest")
+	}
 	for _, u := range m.DeletedUsers {
 		if u.ID == uuid.Nil || u.DeletedAt.IsZero() {
 			return nil, fmt.Errorf("invalid deleted user in manifest")
@@ -100,13 +115,14 @@ func mergeManifests(a, b *restoreManifest) *restoreManifest {
 	merged := &restoreManifest{CreatedAt: time.Now()}
 
 	// Union of deleted users (deduplicate by ID)
-	userSeen := make(map[uuid.UUID]bool)
-	for _, u := range a.DeletedUsers {
-		merged.DeletedUsers = append(merged.DeletedUsers, u)
-		userSeen[u.ID] = true
-	}
-	for _, u := range b.DeletedUsers {
-		if !userSeen[u.ID] {
+	userIndex := make(map[uuid.UUID]int)
+	for _, u := range append(append([]manifestUser{}, a.DeletedUsers...), b.DeletedUsers...) {
+		if i, found := userIndex[u.ID]; found {
+			if u.DeletedAt.After(merged.DeletedUsers[i].DeletedAt) {
+				merged.DeletedUsers[i] = u
+			}
+		} else {
+			userIndex[u.ID] = len(merged.DeletedUsers)
 			merged.DeletedUsers = append(merged.DeletedUsers, u)
 		}
 	}
@@ -136,7 +152,7 @@ func appendManifestSQL(w io.Writer, m *restoreManifest) error {
 		return err
 	}
 	for _, u := range m.DeletedUsers {
-		if _, err := fmt.Fprintf(w, "UPDATE public.users SET deleted_at = '%s', updated_at = now() WHERE id = '%s' AND deleted_at IS NULL;\n", u.DeletedAt.UTC().Format(time.RFC3339Nano), u.ID.String()); err != nil {
+		if _, err := fmt.Fprintf(w, "UPDATE public.users SET deleted_at = GREATEST(deleted_at, '%s'::timestamptz), updated_at = now() WHERE id = '%s';\n", u.DeletedAt.UTC().Format(time.RFC3339Nano), u.ID.String()); err != nil {
 			return err
 		}
 	}
