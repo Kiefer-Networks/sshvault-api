@@ -33,11 +33,11 @@ services:
     env_file:
       - ../.env
     environment:
-      BACKUP_DIR: /backups
+      BACKUP_DIR: /app/backups
       BACKUP_INTERVAL: "${BACKUP_INTERVAL:-24h}"
       BACKUP_RETENTION: "${BACKUP_RETENTION:-7}"
     volumes:
-      - backups:/backups
+      - backups:/app/backups
     depends_on:
       postgres:
         condition: service_healthy
