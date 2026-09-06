@@ -21,6 +21,8 @@ tags:
       **Proof of Work (PoW)** — Register and Login require a solved PoW challenge.
       Flow: `GET /v1/auth/challenge` → solve locally → send solution via `X-PoW-Challenge` and `X-PoW-Nonce` headers.
 
+      Work must also meet the current difficulty when submitted. If difficulty has increased, obtain a new challenge. Every submitted known challenge is consumed, including invalid work.
+
       Algorithm: Find a nonce such that `SHA-256(challenge + nonce)` has at least `difficulty` leading zero bits.
   - name: Vault
     description: Encrypted vault sync
@@ -34,6 +36,8 @@ tags:
     description: User activity audit logs
   - name: System
     description: Health checks
+
+security: []
 
 paths:
   /health:
@@ -196,6 +200,7 @@ paths:
     post:
       tags: [Auth]
       summary: Refresh token pair
+      description: Each refresh token can be rotated once. Reusing a consumed token revokes all account sessions, including the replacement token. Clients must serialize refresh requests and sign in again after replay rejection.
       operationId: refreshToken
       requestBody:
         required: true
@@ -504,6 +509,7 @@ paths:
         - bearerAuth: []
       responses:
         "200":
+          description: Current user profile
           content:
             application/json:
               schema:
@@ -543,6 +549,7 @@ paths:
         "400":
           description: Invalid email, current password, unavailable email change, or recipient cooldown (retry after one minute)
         "200":
+          description: Updated user profile
           content:
             application/json:
               schema:
@@ -782,6 +789,7 @@ paths:
         - bearerAuth: []
       responses:
         "200":
+          description: Registered devices
           content:
             application/json:
               schema:

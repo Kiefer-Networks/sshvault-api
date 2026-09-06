@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -29,6 +30,41 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// UnmarshalJSON distinguishes required zero-valued claims from absent/null claims.
+func (c *Claims) UnmarshalJSON(data []byte) error {
+	type wireClaims Claims
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"exp", "iat", "session_version"} {
+		raw, ok := fields[key]
+		if !ok || string(raw) == "null" || len(raw) == 0 || raw[0] == '"' {
+			return fmt.Errorf("missing or invalid %s claim", key)
+		}
+	}
+	var decoded wireClaims
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = Claims(decoded)
+	return nil
+}
+
+// Validate supplements the registered-claim validator with our session contract.
+func (c *Claims) Validate() error {
+	subject, err := uuid.Parse(c.Subject)
+	if err != nil || subject == uuid.Nil {
+		return fmt.Errorf("invalid subject")
+	}
+	if c.IssuedAt == nil || c.ExpiresAt == nil || !c.ExpiresAt.After(c.IssuedAt.Time) {
+		return fmt.Errorf("invalid token lifetime")
+	}
+	if c.SessionVersion < 0 {
+		return fmt.Errorf("invalid session version")
+	}
+	return nil
+}
 func NewJWTManager(privateKey ed25519.PrivateKey, accessTTL, refreshTTL time.Duration) *JWTManager {
 	return &JWTManager{
 		privateKey: privateKey,
@@ -75,7 +111,7 @@ func (m *JWTManager) ValidateAccessToken(tokenStr string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return m.publicKey, nil
-	}, jwt.WithAudience("sshvault-api"))
+	}, jwt.WithAudience("sshvault-api"), jwt.WithIssuer("sshvault"), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
 	if err != nil {
 		return nil, fmt.Errorf("parsing token: %w", err)
 	}

@@ -82,21 +82,23 @@ var errPowCapacity = fmt.Errorf("challenge capacity exceeded")
 // Verify checks a PoW solution. Returns true if valid, consumes the challenge.
 func (g *PowGuard) Verify(sol PowSolution) bool {
 	g.mu.Lock()
+	defer g.mu.Unlock()
 	challenge, ok := g.pending[sol.Challenge]
-	if ok {
-		delete(g.pending, sol.Challenge)
-	}
-	g.recordRequest()
-	g.mu.Unlock()
-
 	if !ok {
 		return false
 	}
-	if time.Now().Unix() > challenge.ExpiresAt {
+	delete(g.pending, sol.Challenge)
+	if time.Now().Unix() >= challenge.ExpiresAt {
 		return false
 	}
-
-	return verifyLeadingZeros(sol.Challenge, sol.Nonce, challenge.Difficulty)
+	// Policy and consumption share the lock, so concurrent accepted work cannot
+	// advance difficulty between the policy check and admission.
+	difficulty := max(challenge.Difficulty, g.currentDifficulty())
+	if !verifyLeadingZeros(sol.Challenge, sol.Nonce, difficulty) {
+		return false
+	}
+	g.recordRequest()
+	return true
 }
 
 // Cleanup removes expired challenges. Should be called periodically.
@@ -155,7 +157,7 @@ func (g *PowGuard) currentDifficulty() int {
 		g.reqReset = now
 	}
 
-	// Scale difficulty: base + 1 per 50 requests/min
+	// Scale difficulty: base + 1 per 50 accepted solutions/min
 	extra := g.reqCount / 50
 	d := g.baseDifficulty + extra
 	if d > g.maxDifficulty {

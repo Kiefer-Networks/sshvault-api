@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"strings"
-	"time"
-
+	"fmt"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+	"strings"
+	"time"
 )
 
 // hashIP returns a SHA-256 hash of the IP address.
@@ -16,19 +17,6 @@ import (
 func hashIP(ip string) string {
 	h := sha256.Sum256([]byte(ip))
 	return hex.EncodeToString(h[:])
-}
-
-// maskEmail redacts the local part of an email address for log output.
-func maskEmail(email string) string {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return "***"
-	}
-	local, domain := parts[0], parts[1]
-	if len(local) <= 2 {
-		return "***@" + domain
-	}
-	return local[:2] + "***@" + domain
 }
 
 const (
@@ -49,71 +37,6 @@ func NewBruteForceGuard(pool *pgxpool.Pool) *BruteForceGuard {
 	return &BruteForceGuard{pool: pool}
 }
 
-// RecordAttempt logs a login attempt (success or failure).
-// IP is hashed before storage — plaintext IPs are never persisted.
-func (g *BruteForceGuard) RecordAttempt(ctx context.Context, email, ip string, success bool) {
-	query := `INSERT INTO login_attempts (email, ip_address, success, created_at) VALUES ($1, $2, $3, $4)`
-	if _, err := g.pool.Exec(ctx, query, email, hashIP(ip), success, time.Now()); err != nil {
-		log.Error().Err(err).Str("email", maskEmail(email)).Msg("failed to record login attempt")
-	}
-}
-
-// IsAccountLocked checks if the account has exceeded MaxFailedAttempts within the LockoutWindow.
-func (g *BruteForceGuard) IsAccountLocked(ctx context.Context, email string) (bool, time.Duration) {
-	query := `
-		SELECT COUNT(*) FROM login_attempts
-		WHERE email = $1 AND NOT success AND created_at > $2`
-
-	cutoff := time.Now().Add(-LockoutWindow)
-	var count int
-	if err := g.pool.QueryRow(ctx, query, email, cutoff).Scan(&count); err != nil {
-		log.Error().Err(err).Msg("failed to check account lockout")
-		return true, LockoutWindow // Fail-closed: assume locked on DB error
-	}
-
-	if count >= MaxFailedAttempts {
-		// Find the most recent failed attempt to calculate remaining lockout
-		var newestAttempt time.Time
-		newest := `
-			SELECT MAX(created_at) FROM login_attempts
-			WHERE email = $1 AND NOT success AND created_at > $2`
-		if err := g.pool.QueryRow(ctx, newest, email, cutoff).Scan(&newestAttempt); err == nil {
-			remaining := LockoutWindow - time.Since(newestAttempt)
-			if remaining > 0 {
-				return true, remaining
-			}
-		}
-		return true, LockoutWindow
-	}
-
-	return false, 0
-}
-
-// IsIPBlocked checks if an IP has too many failed attempts across all accounts.
-// Comparison uses hashed IPs — plaintext is never queried.
-func (g *BruteForceGuard) IsIPBlocked(ctx context.Context, ip string) bool {
-	query := `
-		SELECT COUNT(*) FROM login_attempts
-		WHERE ip_address = $1 AND NOT success AND created_at > $2`
-
-	cutoff := time.Now().Add(-LockoutWindow)
-	var count int
-	if err := g.pool.QueryRow(ctx, query, hashIP(ip), cutoff).Scan(&count); err != nil {
-		log.Error().Err(err).Msg("failed to check IP block")
-		return true // Fail-closed: assume blocked on DB error
-	}
-
-	return count >= IPBlockThreshold
-}
-
-// ClearAttempts removes failed attempts for an email after successful login.
-func (g *BruteForceGuard) ClearAttempts(ctx context.Context, email string) {
-	query := `DELETE FROM login_attempts WHERE email = $1 AND NOT success`
-	if _, err := g.pool.Exec(ctx, query, email); err != nil {
-		log.Error().Err(err).Msg("failed to clear login attempts")
-	}
-}
-
 // Cleanup removes old login attempts (call periodically via background goroutine).
 func (g *BruteForceGuard) Cleanup(ctx context.Context) {
 	query := `DELETE FROM login_attempts WHERE created_at < $1`
@@ -125,4 +48,71 @@ func (g *BruteForceGuard) Cleanup(ctx context.Context) {
 			log.Info().Int64("deleted", result.RowsAffected()).Msg("cleaned up old login attempts")
 		}
 	}
+}
+
+// ReserveAttempt serializes admission by normalized identity and IP before any
+// password work. A crashed/cancelled request remains charged until the window ends.
+func (g *BruteForceGuard) ReserveAttempt(ctx context.Context, email, ip string) (uuid.UUID, time.Duration, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	tx, err := g.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if ip != "" {
+		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "login-ip:"+hashIP(ip)); err != nil {
+			return uuid.Nil, 0, err
+		}
+	}
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "login-account:"+email); err != nil {
+		return uuid.Nil, 0, err
+	}
+	var count int
+	cutoff := time.Now().Add(-LockoutWindow)
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM login_attempts WHERE email=$1 AND NOT success AND created_at>$2`, email, cutoff).Scan(&count); err != nil {
+		return uuid.Nil, 0, err
+	}
+	if count >= MaxFailedAttempts {
+		return uuid.Nil, LockoutWindow, nil
+	}
+	if ip != "" {
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM login_attempts WHERE ip_address=$1 AND NOT success AND created_at>$2`, hashIP(ip), cutoff).Scan(&count); err != nil {
+			return uuid.Nil, 0, err
+		}
+		if count >= IPBlockThreshold {
+			return uuid.Nil, LockoutWindow, nil
+		}
+	}
+	id := uuid.New()
+	if _, err = tx.Exec(ctx, `INSERT INTO login_attempts(id,email,ip_address,success) VALUES($1,$2,$3,FALSE)`, id, email, hashIP(ip)); err != nil {
+		return uuid.Nil, 0, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return uuid.Nil, 0, err
+	}
+	return id, 0, nil
+}
+
+// CompleteAttempt clears only completed older failures on success. In-flight
+// reservations and newer guesses retain their charge, regardless of finish order.
+func (g *BruteForceGuard) CompleteAttempt(ctx context.Context, email string, id uuid.UUID, success bool) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	tx, err := g.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "login-account:"+email); err != nil {
+		return err
+	}
+	var sequence int64
+	if err = tx.QueryRow(ctx, `UPDATE login_attempts SET success=$3, completed_at=NOW() WHERE id=$1 AND email=$2 AND completed_at IS NULL RETURNING admission_sequence`, id, email, success).Scan(&sequence); err != nil {
+		return fmt.Errorf("completing login admission: %w", err)
+	}
+	if success {
+		if _, err = tx.Exec(ctx, `DELETE FROM login_attempts WHERE email=$1 AND NOT success AND completed_at IS NOT NULL AND admission_sequence<$2`, email, sequence); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

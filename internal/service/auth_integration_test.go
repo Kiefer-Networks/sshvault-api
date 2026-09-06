@@ -353,7 +353,7 @@ func TestIntegrationRefreshWaitsForRevocation(t *testing.T) {
 	}()
 	<-locked
 	read := make(chan struct{})
-	svc.tokenRepo = notifyTokenRead{tokens, read}
+	svc.tokenRepo = &notifyTokenRead{TokenRepository: tokens, read: read}
 	refreshed := make(chan error, 1)
 	go func() {
 		_, err := svc.Refresh(ctx, &RefreshRequest{RefreshToken: response.RefreshToken})
@@ -404,11 +404,12 @@ func TestIntegrationFieldUpdatesPreserveCredentials(t *testing.T) {
 type notifyTokenRead struct {
 	repository.TokenRepository
 	read chan struct{}
+	once sync.Once
 }
 
-func (r notifyTokenRead) GetByHash(ctx context.Context, hash string) (*model.RefreshToken, error) {
+func (r *notifyTokenRead) GetByHash(ctx context.Context, hash string) (*model.RefreshToken, error) {
 	token, err := r.TokenRepository.GetByHash(ctx, hash)
-	close(r.read)
+	r.once.Do(func() { close(r.read) })
 	return token, err
 }
 

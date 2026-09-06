@@ -102,14 +102,14 @@ func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User, devi
 		if current == nil || current.Password != user.Password || current.SessionVersion != user.SessionVersion {
 			return fmt.Errorf("credentials changed; please sign in again")
 		}
-		response, err = s.issueTokenPairLocked(txCtx, current, deviceName)
+		response, err = s.issueTokenPairLocked(txCtx, current, deviceName, nil)
 		return err
 	})
 	return response, err
 }
 
 // issueTokenPairLocked requires the user's row lock for the current transaction.
-func (s *AuthService) issueTokenPairLocked(ctx context.Context, user *model.User, deviceName string) (*AuthResponse, error) {
+func (s *AuthService) issueTokenPairLocked(ctx context.Context, user *model.User, deviceName string, parent *model.RefreshToken) (*AuthResponse, error) {
 	if !user.Verified && !user.VerificationGrandfathered {
 		return nil, ErrVerificationRequired
 	}
@@ -119,10 +119,15 @@ func (s *AuthService) issueTokenPairLocked(ctx context.Context, user *model.User
 	}
 
 	refreshToken := &model.RefreshToken{
-		UserID:     user.ID,
-		TokenHash:  refreshHash,
-		DeviceName: deviceName,
-		ExpiresAt:  time.Now().Add(s.jwt.RefreshTTL()),
+		UserID:         user.ID,
+		SessionVersion: user.SessionVersion,
+		TokenHash:      refreshHash,
+		DeviceName:     deviceName,
+		ExpiresAt:      time.Now().Add(s.jwt.RefreshTTL()),
+	}
+	if parent != nil {
+		refreshToken.FamilyID = parent.FamilyID
+		refreshToken.ParentID = &parent.ID
 	}
 	if err := s.tokenRepo.Create(ctx, refreshToken); err != nil {
 		return nil, fmt.Errorf("storing refresh token: %w", err)
@@ -275,23 +280,26 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		return nil, err
 	}
 
-	// Check IP block
-	if s.bruteForce != nil && req.IP != "" {
-		if s.bruteForce.IsIPBlocked(ctx, req.IP) {
-			log.Warn().Msg("login blocked: IP exceeded attempt threshold")
-			return nil, fmt.Errorf("too many failed attempts, please try again later")
-		}
-	}
-
-	// Check account lockout
+	var attemptID uuid.UUID
+	completed := false
 	if s.bruteForce != nil {
-		locked, remaining := s.bruteForce.IsAccountLocked(ctx, req.Email)
-		if locked {
-			log.Warn().Str("email", maskEmail(req.Email)).Dur("remaining", remaining).Msg("login blocked: account locked")
+		var remaining time.Duration
+		var err error
+		attemptID, remaining, err = s.bruteForce.ReserveAttempt(ctx, req.Email, req.IP)
+		if err != nil {
+			return nil, fmt.Errorf("reserving login attempt: %w", err)
+		}
+		if attemptID == uuid.Nil {
 			return nil, fmt.Errorf("account temporarily locked, try again in %d minutes", int(remaining.Minutes())+1)
 		}
+		defer func() {
+			if !completed {
+				if err := s.bruteForce.CompleteAttempt(ctx, req.Email, attemptID, false); err != nil {
+					log.Error().Err(err).Msg("failed to complete login reservation")
+				}
+			}
+		}()
 	}
-
 	user, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, fmt.Errorf("finding user: %w", err)
@@ -300,30 +308,30 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		// Perform a dummy password verify to equalize timing with real user lookups
 		_, _ = auth.VerifyPassword(req.Password, dummyArgon2Hash)
 		// Record failed attempt even for non-existent accounts to prevent enumeration
-		if s.bruteForce != nil {
-			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
-		}
+
 		log.Warn().Str("email", maskEmail(req.Email)).Msg("login failed: unknown email")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
 	valid, err := auth.VerifyPassword(req.Password, user.Password)
 	if err != nil || !valid {
-		if s.bruteForce != nil {
-			s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, false)
-		}
+
 		log.Warn().Str("email", maskEmail(req.Email)).Msg("login failed: wrong password")
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// Successful login — record and clear failed attempts
+	response, err := s.issueTokenPair(ctx, user, req.DeviceName)
+	if err != nil {
+		return nil, err
+	}
 	if s.bruteForce != nil {
-		s.bruteForce.RecordAttempt(ctx, req.Email, req.IP, true)
-		s.bruteForce.ClearAttempts(ctx, req.Email)
+		if err = s.bruteForce.CompleteAttempt(ctx, req.Email, attemptID, true); err != nil {
+			return nil, err
+		}
+		completed = true
 	}
 	log.Info().Str("email", maskEmail(req.Email)).Msg("login successful")
-
-	return s.issueTokenPair(ctx, user, req.DeviceName)
+	return response, nil
 }
 
 func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthResponse, error) {
@@ -332,32 +340,61 @@ func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthRe
 	if err != nil {
 		return nil, fmt.Errorf("finding refresh token: %w", err)
 	}
+	invalid := errors.New("invalid or expired refresh token")
 	if stored == nil {
-		return nil, fmt.Errorf("invalid or expired refresh token")
+		return nil, invalid
 	}
 	var response *AuthResponse
+	replay := false
 	err = s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
-		// Lock the user first, matching password changes, logout-all and deletion.
+		// User-first locking matches every credential mutation and serializes refreshes.
 		user, err := s.userRepo.GetByIDForUpdate(txCtx, stored.UserID)
 		if err != nil {
 			return err
 		}
 		if user == nil {
-			return fmt.Errorf("user not found")
+			return invalid
+		}
+		current, err := s.tokenRepo.GetByHash(txCtx, hash)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			return invalid
+		}
+		if current.ConsumedAt != nil {
+			// Commit revocation before returning the authentication failure. Session
+			// versions are user-wide, so revoke all refresh credentials at that boundary.
+			if err = s.userRepo.RevokeSessions(txCtx, user.ID); err != nil {
+				return err
+			}
+			if err = s.tokenRepo.RevokeAllForUser(txCtx, user.ID); err != nil {
+				return err
+			}
+			replay = true
+			return nil
+		}
+		if current.SessionVersion != user.SessionVersion {
+			return invalid
 		}
 		consumed, err := s.tokenRepo.ConsumeRefreshToken(txCtx, hash)
 		if err != nil {
 			return fmt.Errorf("consuming refresh token: %w", err)
 		}
 		if consumed == nil {
-			return fmt.Errorf("invalid or expired refresh token")
+			return invalid
 		}
-		response, err = s.issueTokenPairLocked(txCtx, user, consumed.DeviceName)
+		response, err = s.issueTokenPairLocked(txCtx, user, consumed.DeviceName, consumed)
 		return err
 	})
-	return response, err
+	if err != nil {
+		return nil, err
+	}
+	if replay {
+		return nil, invalid
+	}
+	return response, nil
 }
-
 func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 	hash := auth.HashToken(refreshToken)
 	stored, err := s.tokenRepo.GetByHash(ctx, hash)

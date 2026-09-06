@@ -86,6 +86,9 @@ func newMockTokenRepo() *mockTokenRepo {
 
 func (m *mockTokenRepo) Create(_ context.Context, token *model.RefreshToken) error {
 	token.ID = uuid.New()
+	if token.FamilyID == uuid.Nil {
+		token.FamilyID = uuid.New()
+	}
 	token.CreatedAt = time.Now()
 	m.tokens[token.ID] = token
 	m.hashIndex[token.TokenHash] = token
@@ -118,6 +121,8 @@ func (m *mockTokenRepo) ConsumeRefreshToken(_ context.Context, tokenHash string)
 		return nil, nil
 	}
 	t.Revoked = true
+	now := time.Now()
+	t.ConsumedAt = &now
 	return t, nil
 }
 

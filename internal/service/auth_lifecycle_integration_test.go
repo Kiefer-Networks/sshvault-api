@@ -232,6 +232,16 @@ func TestLifecycleGrandfatheringUpgrade(t *testing.T) {
 	if u.Verified || !u.VerificationGrandfathered {
 		t.Fatalf("upgrade lost explicit legacy status: %+v", u)
 	}
+	for _, name := range []string{
+		"024_mailbox_owner_activation.up.sql",
+		"025_auth_replay_admission.up.sql",
+	} {
+		migration, err = os.ReadFile(filepath.Join(testutil.MigrationDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		testutil.Exec(t, p, string(migration))
+	}
 	jwt := newTestJWT(t)
 	tokens := repository.NewTokenRepository(p)
 	svc := NewAuthService(users, tokens, repository.NewVerificationRepository(p), repository.NewTransactor(p), jwt, nil, nil)
