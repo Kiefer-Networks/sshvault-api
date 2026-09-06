@@ -18,4 +18,4 @@ keys/
 
 # Backups
 backups/
-cli
+/cli

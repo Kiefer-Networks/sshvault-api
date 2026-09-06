@@ -1,26 +1,62 @@
 name: Dependabot Auto-Merge
 
+# This privileged workflow never checks out or executes pull request code.
 on:
-  pull_request:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   automerge:
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - name: Fetch Dependabot metadata
+      - name: Fetch verified Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
         with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Auto-merge non-breaking updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
-        run: gh pr merge --auto --squash "$PR_URL"
+          github-token: ${{ github.token }}
+      - name: Enable auto-merge only behind required CI
+        if: >-
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor') &&
+          steps.metadata.outputs.package-ecosystem == 'gomod'
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Fail closed if branch protection cannot be inspected. Requiring strict
+          # CI prevents auto-merge from landing an unchecked dependency update.
+          # GraphQL variables must reach GitHub literally.
+          # shellcheck disable=SC2016
+          if ! gh api graphql \
+            -f owner="${GH_REPO%/*}" -f name="${GH_REPO#*/}" -F number="$PR_NUMBER" \
+            -f query='query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  baseRef { branchProtectionRule {
+                    requiresStatusChecks requiresStrictStatusChecks requiredStatusCheckContexts
+                  } }
+                }
+              }
+            }' \
+            --jq '.data.repository.pullRequest.baseRef.branchProtectionRule |
+              .requiresStatusChecks == true and .requiresStrictStatusChecks == true and
+              (.requiredStatusCheckContexts | index("CI") != null)' \
+            | grep -qx true; then
+            echo 'Auto-merge skipped: strict branch protection with required CI is missing or inaccessible.'
+            exit 0
+          fi
+          gh pr merge "$PR_NUMBER" --auto --squash --match-head-commit "$HEAD_SHA"
