@@ -29,7 +29,7 @@ func (r *pgVerificationRepo) Create(ctx context.Context, token *VerificationToke
 	}
 	token.CreatedAt = time.Now()
 
-	_, err := r.pool.Exec(ctx, query,
+	_, err := conn(ctx, r.pool).Exec(ctx, query,
 		token.ID, token.UserID, token.TokenHash, token.Kind,
 		token.ExpiresAt, false, token.CreatedAt)
 	if err != nil {
@@ -45,7 +45,7 @@ func (r *pgVerificationRepo) GetByHash(ctx context.Context, tokenHash, kind stri
 		WHERE token_hash = $1 AND kind = $2 AND NOT used`
 
 	var t VerificationToken
-	err := r.pool.QueryRow(ctx, query, tokenHash, kind).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, tokenHash, kind).Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.Kind,
 		&t.ExpiresAt, &t.Used, &t.CreatedAt)
 	if err != nil {
@@ -65,7 +65,7 @@ func (r *pgVerificationRepo) ConsumeVerificationToken(ctx context.Context, token
 		RETURNING id, user_id, token_hash, kind, expires_at, used, created_at`
 
 	var t VerificationToken
-	err := r.pool.QueryRow(ctx, query, tokenHash, kind).Scan(
+	err := conn(ctx, r.pool).QueryRow(ctx, query, tokenHash, kind).Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.Kind,
 		&t.ExpiresAt, &t.Used, &t.CreatedAt)
 	if err != nil {
@@ -88,7 +88,7 @@ func (r *pgVerificationRepo) MarkUsed(ctx context.Context, id uuid.UUID) error {
 
 func (r *pgVerificationRepo) DeleteExpired(ctx context.Context) (int64, error) {
 	query := `DELETE FROM verification_tokens WHERE expires_at < $1 OR used = TRUE`
-	result, err := r.pool.Exec(ctx, query, time.Now())
+	result, err := conn(ctx, r.pool).Exec(ctx, query, time.Now())
 	if err != nil {
 		return 0, fmt.Errorf("deleting expired tokens: %w", err)
 	}
@@ -97,7 +97,7 @@ func (r *pgVerificationRepo) DeleteExpired(ctx context.Context) (int64, error) {
 
 func (r *pgVerificationRepo) RevokeAllForUser(ctx context.Context, userID uuid.UUID, kind string) error {
 	query := `UPDATE verification_tokens SET used = TRUE WHERE user_id = $1 AND kind = $2 AND NOT used`
-	_, err := r.pool.Exec(ctx, query, userID, kind)
+	_, err := conn(ctx, r.pool).Exec(ctx, query, userID, kind)
 	if err != nil {
 		return fmt.Errorf("revoking tokens for user: %w", err)
 	}

@@ -25,6 +25,7 @@ type TokenPair struct {
 }
 
 type Claims struct {
+	SessionVersion int64 `json:"session_version"`
 	jwt.RegisteredClaims
 }
 
@@ -37,11 +38,12 @@ func NewJWTManager(privateKey ed25519.PrivateKey, accessTTL, refreshTTL time.Dur
 	}
 }
 
-func (m *JWTManager) GenerateTokenPair(userID uuid.UUID) (*TokenPair, string, error) {
+func (m *JWTManager) GenerateTokenPair(userID uuid.UUID, sessionVersion int64) (*TokenPair, string, error) {
 	now := time.Now()
 	accessExp := now.Add(m.accessTTL)
 
 	accessClaims := &Claims{
+		SessionVersion: sessionVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),

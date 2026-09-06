@@ -15,13 +15,13 @@ import (
 type UserService struct {
 	userRepo  repository.UserRepository
 	tokenRepo repository.TokenRepository
-	tx        *repository.Transactor
+	tx        repository.TransactionRunner
 }
 
 func NewUserService(
 	userRepo repository.UserRepository,
 	tokenRepo repository.TokenRepository,
-	tx *repository.Transactor,
+	tx repository.TransactionRunner,
 ) *UserService {
 	return &UserService{
 		userRepo:  userRepo,
@@ -76,10 +76,9 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 		}
 		user.Email = req.Email
 		user.Verified = false
-	}
-
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return nil, fmt.Errorf("updating user: %w", err)
+		if err := s.userRepo.UpdateEmail(ctx, user.ID, user.Email); err != nil {
+			return nil, fmt.Errorf("updating user: %w", err)
+		}
 	}
 	return user, nil
 }
@@ -107,8 +106,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 
 	// Update password and revoke all sessions atomically.
 	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
-		user.Password = hash
-		if err := s.userRepo.Update(txCtx, user); err != nil {
+		if err := s.userRepo.UpdatePassword(txCtx, user.ID, user.Password, hash); err != nil {
 			return fmt.Errorf("updating password: %w", err)
 		}
 		if err := s.tokenRepo.RevokeAllForUser(txCtx, userID); err != nil {

@@ -22,13 +22,13 @@ import (
 const dummyArgon2Hash = "$argon2id$v=19$m=262144,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type AuthService struct {
-	userRepo      repository.UserRepository
-	tokenRepo     repository.TokenRepository
-	verifyRepo    repository.VerificationRepository
-	tx            *repository.Transactor
-	jwt           *auth.JWTManager
-	mailer        MailSender
-	bruteForce    *middleware.BruteForceGuard
+	userRepo   repository.UserRepository
+	tokenRepo  repository.TokenRepository
+	verifyRepo repository.VerificationRepository
+	tx         repository.TransactionRunner
+	jwt        *auth.JWTManager
+	mailer     MailSender
+	bruteForce *middleware.BruteForceGuard
 }
 
 type MailSender interface {
@@ -40,7 +40,7 @@ func NewAuthService(
 	userRepo repository.UserRepository,
 	tokenRepo repository.TokenRepository,
 	verifyRepo repository.VerificationRepository,
-	tx *repository.Transactor,
+	tx repository.TransactionRunner,
 	jwt *auth.JWTManager,
 	mailer MailSender,
 	bruteForce *middleware.BruteForceGuard,
@@ -81,7 +81,24 @@ type AuthResponse struct {
 
 // issueTokenPair generates an access/refresh token pair, stores the refresh token, and returns an AuthResponse.
 func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User, deviceName string) (*AuthResponse, error) {
-	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID)
+	var response *AuthResponse
+	err := s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		current, err := s.userRepo.GetByIDForUpdate(txCtx, user.ID)
+		if err != nil {
+			return err
+		}
+		if current == nil || current.Password != user.Password || current.SessionVersion != user.SessionVersion {
+			return fmt.Errorf("credentials changed; please sign in again")
+		}
+		response, err = s.issueTokenPairLocked(txCtx, current, deviceName)
+		return err
+	})
+	return response, err
+}
+
+// issueTokenPairLocked requires the user's row lock for the current transaction.
+func (s *AuthService) issueTokenPairLocked(ctx context.Context, user *model.User, deviceName string) (*AuthResponse, error) {
+	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID, user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("generating tokens: %w", err)
 	}
@@ -252,24 +269,34 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 
 func (s *AuthService) Refresh(ctx context.Context, req *RefreshRequest) (*AuthResponse, error) {
 	hash := auth.HashToken(req.RefreshToken)
-
-	// Atomically revoke and return the token to prevent race conditions
-	// where two concurrent requests could both consume the same token.
-	stored, err := s.tokenRepo.ConsumeRefreshToken(ctx, hash)
+	stored, err := s.tokenRepo.GetByHash(ctx, hash)
 	if err != nil {
-		return nil, fmt.Errorf("consuming refresh token: %w", err)
+		return nil, fmt.Errorf("finding refresh token: %w", err)
 	}
 	if stored == nil {
-		log.Warn().Msg("refresh failed: invalid, expired, or already consumed token")
 		return nil, fmt.Errorf("invalid or expired refresh token")
 	}
-
-	user, err := s.userRepo.GetByID(ctx, stored.UserID)
-	if err != nil || user == nil {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	return s.issueTokenPair(ctx, user, stored.DeviceName)
+	var response *AuthResponse
+	err = s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		// Lock the user first, matching password changes, logout-all and deletion.
+		user, err := s.userRepo.GetByIDForUpdate(txCtx, stored.UserID)
+		if err != nil {
+			return err
+		}
+		if user == nil {
+			return fmt.Errorf("user not found")
+		}
+		consumed, err := s.tokenRepo.ConsumeRefreshToken(txCtx, hash)
+		if err != nil {
+			return fmt.Errorf("consuming refresh token: %w", err)
+		}
+		if consumed == nil {
+			return fmt.Errorf("invalid or expired refresh token")
+		}
+		response, err = s.issueTokenPairLocked(txCtx, user, consumed.DeviceName)
+		return err
+	})
+	return response, err
 }
 
 func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
@@ -284,33 +311,37 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 	return s.tokenRepo.Revoke(ctx, stored.ID)
 }
 
-// VerifyEmail validates an email verification token and marks the user as verified.
-// Uses atomic token consumption to prevent race conditions where two concurrent
-// requests with the same token could both succeed.
+// VerifyEmail consumes the token and verifies the user atomically.
 func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 	hash := auth.HashToken(rawToken)
-
-	// Atomically mark the token as used and return it, preventing double-use.
-	token, err := s.verifyRepo.ConsumeVerificationToken(ctx, hash, repository.TokenKindEmailVerify)
+	stored, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindEmailVerify)
 	if err != nil {
-		return fmt.Errorf("consuming verification token: %w", err)
+		return fmt.Errorf("finding verification token: %w", err)
 	}
-	if token == nil {
+	if stored == nil || !stored.ExpiresAt.After(time.Now()) {
 		return fmt.Errorf("invalid or expired verification token")
 	}
-
-	user, err := s.userRepo.GetByID(ctx, token.UserID)
-	if err != nil || user == nil {
-		return fmt.Errorf("user not found")
-	}
-
-	user.Verified = true
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return fmt.Errorf("updating user: %w", err)
-	}
-
-	log.Info().Str("email", maskEmail(user.Email)).Msg("email verified")
-	return nil
+	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		// Lock the user before the token, matching email changes and password resets.
+		user, err := s.userRepo.GetByIDForUpdate(txCtx, stored.UserID)
+		if err != nil {
+			return err
+		}
+		if user == nil {
+			return fmt.Errorf("user not found")
+		}
+		token, err := s.verifyRepo.ConsumeVerificationToken(txCtx, hash, repository.TokenKindEmailVerify)
+		if err != nil {
+			return fmt.Errorf("consuming verification token: %w", err)
+		}
+		if token == nil {
+			return fmt.Errorf("invalid or expired verification token")
+		}
+		if err = s.userRepo.MarkVerified(txCtx, user.ID, user.Email); err != nil {
+			return fmt.Errorf("updating user: %w", err)
+		}
+		return nil
+	})
 }
 
 // ForgotPassword generates a password reset token and sends it via email.
@@ -322,21 +353,30 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 		return nil // Don't reveal if user exists
 	}
 
-	if err := s.verifyRepo.RevokeAllForUser(ctx, user.ID, repository.TokenKindPasswordReset); err != nil {
-		log.Warn().Err(err).Str("user_id", user.ID.String()).Msg("failed to revoke existing password reset tokens")
-	}
-
 	rawToken := uuid.New().String()
-	hash := auth.HashToken(rawToken)
-
-	vt := &repository.VerificationToken{
-		UserID:    user.ID,
-		TokenHash: hash,
-		Kind:      repository.TokenKindPasswordReset,
-		ExpiresAt: time.Now().Add(1 * time.Hour),
+	issued := false
+	if err := s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		current, err := s.userRepo.GetByIDForUpdate(txCtx, user.ID)
+		if err != nil {
+			return err
+		}
+		if current == nil || current.Email != email {
+			return nil
+		}
+		if err = s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindPasswordReset); err != nil {
+			return fmt.Errorf("revoking reset tokens: %w", err)
+		}
+		token := &repository.VerificationToken{UserID: user.ID, TokenHash: auth.HashToken(rawToken), Kind: repository.TokenKindPasswordReset, ExpiresAt: time.Now().Add(time.Hour)}
+		if err = s.verifyRepo.Create(txCtx, token); err != nil {
+			return fmt.Errorf("creating reset token: %w", err)
+		}
+		issued = true
+		return nil
+	}); err != nil {
+		return err
 	}
-	if err := s.verifyRepo.Create(ctx, vt); err != nil {
-		return fmt.Errorf("creating reset token: %w", err)
+	if !issued {
+		return nil
 	}
 
 	if s.mailer != nil {
@@ -352,49 +392,50 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 // ResetPassword validates a reset token and sets a new password.
 func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword string) error {
 	hash := auth.HashToken(rawToken)
-	token, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindPasswordReset)
+	// Reject invalid tokens before the expensive password hash. Consumption below
+	// remains authoritative when another request changes the token meanwhile.
+	stored, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindPasswordReset)
 	if err != nil {
-		return fmt.Errorf("looking up token: %w", err)
+		return fmt.Errorf("finding reset token: %w", err)
 	}
-	if token == nil {
+	if stored == nil || !stored.ExpiresAt.After(time.Now()) {
 		return fmt.Errorf("invalid or expired reset token")
 	}
-	if time.Now().After(token.ExpiresAt) {
-		return fmt.Errorf("reset token expired")
-	}
-
-	user, err := s.userRepo.GetByID(ctx, token.UserID)
-	if err != nil || user == nil {
-		return fmt.Errorf("user not found")
-	}
-
 	passwordHash, err := auth.HashPassword(newPassword)
 	if err != nil {
 		return fmt.Errorf("hashing password: %w", err)
 	}
-
-	// Update password, mark token used, and revoke all sessions atomically.
-	if err := s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
-		user.Password = passwordHash
-		if err := s.userRepo.Update(txCtx, user); err != nil {
+	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		user, err := s.userRepo.GetByIDForUpdate(txCtx, stored.UserID)
+		if err != nil {
+			return err
+		}
+		if user == nil {
+			return fmt.Errorf("user not found")
+		}
+		token, err := s.verifyRepo.ConsumeVerificationToken(txCtx, hash, repository.TokenKindPasswordReset)
+		if err != nil {
+			return fmt.Errorf("consuming reset token: %w", err)
+		}
+		if token == nil {
+			return fmt.Errorf("invalid or expired reset token")
+		}
+		if err = s.userRepo.UpdatePassword(txCtx, user.ID, user.Password, passwordHash); err != nil {
 			return fmt.Errorf("updating password: %w", err)
 		}
-		if err := s.verifyRepo.MarkUsed(txCtx, token.ID); err != nil {
-			return fmt.Errorf("marking reset token as used: %w", err)
-		}
-		if err := s.tokenRepo.RevokeAllForUser(txCtx, user.ID); err != nil {
+		if err = s.tokenRepo.RevokeAllForUser(txCtx, user.ID); err != nil {
 			return fmt.Errorf("revoking tokens: %w", err)
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-
-	log.Info().Str("user_id", user.ID.String()).Msg("password reset completed")
-	return nil
+	})
 }
 
-// LogoutAll revokes all refresh tokens for the given user.
+// LogoutAll revokes access and refresh tokens under the same user row lock.
 func (s *AuthService) LogoutAll(ctx context.Context, userID uuid.UUID) error {
-	return s.tokenRepo.RevokeAllForUser(ctx, userID)
+	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := s.userRepo.RevokeSessions(txCtx, userID); err != nil {
+			return err
+		}
+		return s.tokenRepo.RevokeAllForUser(txCtx, userID)
+	})
 }

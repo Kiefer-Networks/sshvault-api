@@ -7,16 +7,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
+	"github.com/kiefernetworks/shellvault-server/internal/model"
 )
 
 const UserIDKey contextKey = "user_id"
 
-type AuthMiddleware struct {
-	jwt *auth.JWTManager
+type SessionUserReader interface {
+	GetByID(context.Context, uuid.UUID) (*model.User, error)
 }
 
-func NewAuthMiddleware(jwt *auth.JWTManager) *AuthMiddleware {
-	return &AuthMiddleware{jwt: jwt}
+type AuthMiddleware struct {
+	users SessionUserReader
+	jwt   *auth.JWTManager
+}
+
+func NewAuthMiddleware(jwt *auth.JWTManager, users SessionUserReader) *AuthMiddleware {
+	return &AuthMiddleware{jwt: jwt, users: users}
 }
 
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
@@ -45,6 +51,15 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
+		user, err := m.users.GetByID(r.Context(), userID)
+		if err != nil {
+			respondJSONError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			return
+		}
+		if user == nil || user.DeletedAt != nil || user.SessionVersion != claims.SessionVersion {
+			respondJSONError(w, http.StatusUnauthorized, "invalid or revoked session")
+			return
+		}
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
