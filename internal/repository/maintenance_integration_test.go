@@ -70,13 +70,13 @@ func TestAccountCreationAndPurgeObserveMaintenance(t *testing.T) {
 }
 
 func TestStandaloneAccountFieldsObserveMaintenance(t *testing.T) {
-	for _, action := range []string{"email", "avatar", "verified", "password", "sessions"} {
+	for _, action := range []string{"email", "pending_email", "confirm_pending_email", "avatar", "verified", "password", "sessions"} {
 		t.Run(action, func(t *testing.T) {
 			p := testutil.Database(t, 0)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			id := uuid.New()
-			testutil.Exec(t, p, `INSERT INTO users(id,email,password) VALUES($1,'fields@example.com','original')`, id)
+			testutil.Exec(t, p, `INSERT INTO users(id,email,password,pending_email) VALUES($1,'fields@example.com','original','pending@example.com')`, id)
 			gate, err := p.Acquire(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -93,6 +93,10 @@ func TestStandaloneAccountFieldsObserveMaintenance(t *testing.T) {
 				switch action {
 				case "email":
 					err = r.UpdateEmail(ctx, id, "updated@example.com")
+				case "pending_email":
+					err = r.SetPendingEmail(ctx, id, "updated@example.com")
+				case "confirm_pending_email":
+					err = r.ConfirmPendingEmail(ctx, id, "pending@example.com")
 				case "avatar":
 					err = r.UpdateAvatar(ctx, id, "updated")
 				case "verified":

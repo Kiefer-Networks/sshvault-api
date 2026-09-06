@@ -95,7 +95,7 @@ func (m *mockTokenRepo) DeleteExpired(_ context.Context) (int64, error) {
 // --- helpers ---
 
 func newUserHandler(userRepo repository.UserRepository) *UserHandler {
-	us := service.NewUserService(userRepo, &mockTokenRepo{}, nil)
+	us := service.NewUserService(userRepo, &mockTokenRepo{}, nil, nil, nil)
 	al := audit.NewNopLogger()
 	return NewUserHandler(us, userRepo, al)
 }
@@ -242,7 +242,7 @@ func TestUpdateProfile_EmailTooLong(t *testing.T) {
 	}
 }
 
-func TestUpdateProfile_Success(t *testing.T) {
+func TestUpdateProfile_RejectsBearerOnlyEmailChange(t *testing.T) {
 	userID := uuid.New()
 	userRepo := &mockUserRepo{
 		user: &model.User{
@@ -262,8 +262,8 @@ func TestUpdateProfile_Success(t *testing.T) {
 
 	h.UpdateProfile(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
@@ -461,4 +461,24 @@ func (m *mockUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) error {
 	}
 	u.SessionVersion++
 	return m.Update(ctx, u)
+}
+
+func (m *mockUserRepo) SetPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.PendingEmail = email
+	return nil
+}
+func (m *mockUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Email = email
+	u.PendingEmail = ""
+	u.Verified = true
+	u.SessionVersion++
+	return nil
 }

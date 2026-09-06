@@ -18,7 +18,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// RequestLogger logs each HTTP request with method, URL, status, duration, and request ID.
+// RequestLogger logs each HTTP request with method, path, status, duration, and request ID.
 func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -30,7 +30,8 @@ func RequestLogger(next http.Handler) http.Handler {
 
 		log.Info().
 			Str("method", r.Method).
-			Str("url", r.URL.RequestURI()).
+			// Query strings may contain single-use mailbox credentials.
+			Str("url", r.URL.EscapedPath()).
 			Int("status", wrapped.status).
 			Dur("duration", time.Since(start)).
 			Str("request_id", reqID).

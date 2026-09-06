@@ -164,7 +164,7 @@ func TestGetUserIDMissing(t *testing.T) {
 type activeSessionUsers struct{}
 
 func (activeSessionUsers) GetByID(_ context.Context, id uuid.UUID) (*model.User, error) {
-	return &model.User{ID: id}, nil
+	return &model.User{ID: id, Verified: true}, nil
 }
 
 type sessionReadResult struct {
@@ -192,7 +192,7 @@ func TestAuthMiddlewareRejectsRevokedOrUnavailableAccount(t *testing.T) {
 		{"deleted", sessionReadResult{user: &model.User{ID: id, SessionVersion: 7, DeletedAt: &deleted}}, 401},
 		{"revoked", sessionReadResult{user: &model.User{ID: id, SessionVersion: 8}}, 401},
 		{"database_error", sessionReadResult{err: errors.New("database unavailable")}, 503},
-		{"active", sessionReadResult{user: &model.User{ID: id, SessionVersion: 7}}, 204},
+		{"active", sessionReadResult{user: &model.User{ID: id, SessionVersion: 7, Verified: true}}, 204},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			handler := NewAuthMiddleware(manager, tc.reader).Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))

@@ -161,9 +161,11 @@ func seedUser(repo *userSvcMockUserRepo, email, password string) *model.User {
 
 func newUserService(repo *userSvcMockUserRepo, tokenRepo *userSvcMockTokenRepo) *UserService {
 	return &UserService{
-		userRepo:  repo,
-		tokenRepo: tokenRepo,
-		tx:        nil, // Transaction-dependent methods tested separately
+		userRepo:   repo,
+		tokenRepo:  tokenRepo,
+		tx:         testTransactionRunner{},
+		verifyRepo: newMockVerifyRepo(),
+		mailer:     &mockMailer{},
 	}
 }
 
@@ -220,17 +222,17 @@ func TestUpdateProfileEmailChange(t *testing.T) {
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 	user := seedUser(repo, "old@example.com", "password123")
 
-	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "new@example.com",
 	})
 	if err != nil {
 		t.Fatalf("UpdateProfile: %v", err)
 	}
-	if result.Email != "new@example.com" {
+	if result.PendingEmail != "new@example.com" || result.Email != "old@example.com" {
 		t.Errorf("Email = %q, want %q", result.Email, "new@example.com")
 	}
-	if result.Verified {
-		t.Error("user should be unverified after email change")
+	if !result.Verified {
+		t.Error("active email must stay verified before confirmation")
 	}
 }
 
@@ -239,7 +241,7 @@ func TestUpdateProfileSameEmail(t *testing.T) {
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 	user := seedUser(repo, "same@example.com", "password123")
 
-	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "same@example.com",
 	})
 	if err != nil {
@@ -255,7 +257,7 @@ func TestUpdateProfileEmptyEmail(t *testing.T) {
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 	user := seedUser(repo, "keep@example.com", "password123")
 
-	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "",
 	})
 	if err != nil {
@@ -271,7 +273,7 @@ func TestUpdateProfileInvalidEmail(t *testing.T) {
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 	user := seedUser(repo, "valid@example.com", "password123")
 
-	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "not-an-email",
 	})
 	if err == nil {
@@ -288,7 +290,7 @@ func TestUpdateProfileEmailAlreadyInUse(t *testing.T) {
 	seedUser(repo, "taken@example.com", "password123")
 	user := seedUser(repo, "original@example.com", "password123")
 
-	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "taken@example.com",
 	})
 	if err == nil {
@@ -304,13 +306,13 @@ func TestUpdateProfileNormalizesEmail(t *testing.T) {
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 	user := seedUser(repo, "old@example.com", "password123")
 
-	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	result, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "  NEW@EXAMPLE.COM  ",
 	})
 	if err != nil {
 		t.Fatalf("UpdateProfile: %v", err)
 	}
-	if result.Email != "new@example.com" {
+	if result.PendingEmail != "new@example.com" || result.Email != "old@example.com" {
 		t.Errorf("Email = %q, want %q", result.Email, "new@example.com")
 	}
 }
@@ -319,7 +321,7 @@ func TestUpdateProfileUserNotFound(t *testing.T) {
 	repo := newUserSvcMockUserRepo()
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 
-	_, err := svc.UpdateProfile(context.Background(), uuid.New(), &UpdateProfileRequest{
+	_, err := svc.UpdateProfile(context.Background(), uuid.New(), &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "new@example.com",
 	})
 	if err == nil {
@@ -335,7 +337,7 @@ func TestUpdateProfileRepoGetError(t *testing.T) {
 	repo.getByIDErr = fmt.Errorf("db error")
 	svc := newUserService(repo, newUserSvcMockTokenRepo())
 
-	_, err := svc.UpdateProfile(context.Background(), uuid.New(), &UpdateProfileRequest{
+	_, err := svc.UpdateProfile(context.Background(), uuid.New(), &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "new@example.com",
 	})
 	if err == nil {
@@ -353,7 +355,7 @@ func TestUpdateProfileEmailCheckError(t *testing.T) {
 
 	repo.getByEmailErr = fmt.Errorf("db lookup error")
 
-	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{
+	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123",
 		Email: "different@example.com",
 	})
 	if err == nil {
@@ -371,12 +373,12 @@ func TestUpdateProfileUpdateError(t *testing.T) {
 
 	repo.updateErr = fmt.Errorf("write failed")
 
-	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{Email: "changed@example.com"})
+	_, err := svc.UpdateProfile(context.Background(), user.ID, &UpdateProfileRequest{CurrentPassword: "password123", Email: "changed@example.com"})
 	if err == nil {
 		t.Fatal("expected error when update fails")
 	}
-	if !strings.Contains(err.Error(), "updating user") {
-		t.Errorf("error = %q, want 'updating user'", err.Error())
+	if !strings.Contains(err.Error(), "requesting email change") {
+		t.Errorf("error = %q, want 'requesting email change'", err.Error())
 	}
 }
 
@@ -476,4 +478,27 @@ func (m *userSvcMockUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) 
 	}
 	u.SessionVersion++
 	return m.Update(ctx, u)
+}
+
+func (m *userSvcMockUserRepo) SetPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	u.PendingEmail = email
+	return nil
+}
+func (m *userSvcMockUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Email = email
+	u.PendingEmail = ""
+	u.Verified = true
+	u.SessionVersion++
+	return nil
 }

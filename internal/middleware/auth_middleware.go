@@ -60,6 +60,10 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			respondJSONError(w, http.StatusUnauthorized, "invalid or revoked session")
 			return
 		}
+		if !user.Verified && !user.VerificationGrandfathered {
+			respondJSONError(w, http.StatusForbidden, "verification_required")
+			return
+		}
 		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

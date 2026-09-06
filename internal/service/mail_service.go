@@ -42,3 +42,10 @@ func (s *MailService) SendPasswordResetEmail(ctx context.Context, email, token s
 	}
 	return nil
 }
+
+func (s *MailService) SendEmailChangeEmail(ctx context.Context, email, token string) error {
+	if err := s.mailer.Send(ctx, email, "Confirm your SSHVault email change", mail.EmailChangeBody(s.apiBaseURL, token)); err != nil {
+		return fmt.Errorf("sending email change confirmation: %w", err)
+	}
+	return nil
+}

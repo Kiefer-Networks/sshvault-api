@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
@@ -12,26 +13,37 @@ import (
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
 )
 
+type EmailChangeSender interface {
+	SendEmailChangeEmail(ctx context.Context, email, token string) error
+}
+
 type UserService struct {
-	userRepo  repository.UserRepository
-	tokenRepo repository.TokenRepository
-	tx        repository.TransactionRunner
+	verifyRepo repository.VerificationRepository
+	mailer     EmailChangeSender
+	userRepo   repository.UserRepository
+	tokenRepo  repository.TokenRepository
+	tx         repository.TransactionRunner
 }
 
 func NewUserService(
 	userRepo repository.UserRepository,
 	tokenRepo repository.TokenRepository,
 	tx repository.TransactionRunner,
+	verifyRepo repository.VerificationRepository,
+	mailer EmailChangeSender,
 ) *UserService {
 	return &UserService{
-		userRepo:  userRepo,
-		tokenRepo: tokenRepo,
-		tx:        tx,
+		verifyRepo: verifyRepo,
+		mailer:     mailer,
+		userRepo:   userRepo,
+		tokenRepo:  tokenRepo,
+		tx:         tx,
 	}
 }
 
 type UpdateProfileRequest struct {
-	Email string `json:"email,omitempty"`
+	Email           string `json:"email,omitempty"`
+	CurrentPassword string `json:"current_password,omitempty"`
 }
 
 type ChangePasswordRequest struct {
@@ -67,6 +79,10 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 		if _, err := mail.ParseAddress(req.Email); err != nil {
 			return nil, fmt.Errorf("invalid email format")
 		}
+		valid, err := auth.VerifyPassword(req.CurrentPassword, user.Password)
+		if err != nil || !valid {
+			return nil, fmt.Errorf("invalid current password")
+		}
 		existing, err := s.userRepo.GetByEmail(ctx, req.Email)
 		if err != nil {
 			return nil, fmt.Errorf("checking email: %w", err)
@@ -74,11 +90,33 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 		if existing != nil {
 			return nil, fmt.Errorf("email already in use")
 		}
-		user.Email = req.Email
-		user.Verified = false
-		if err := s.userRepo.UpdateEmail(ctx, user.ID, user.Email); err != nil {
-			return nil, fmt.Errorf("updating user: %w", err)
+		if s.verifyRepo == nil || s.mailer == nil {
+			return nil, fmt.Errorf("email change unavailable")
 		}
+		rawToken := uuid.NewString()
+		err = s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+			current, err := s.userRepo.GetByIDForUpdate(txCtx, user.ID)
+			if err != nil {
+				return err
+			}
+			if current == nil || current.Password != user.Password || current.SessionVersion != user.SessionVersion || current.Email != user.Email {
+				return fmt.Errorf("credentials changed; please sign in again")
+			}
+			if err = s.verifyRepo.RevokeAllForUser(txCtx, user.ID, repository.TokenKindEmailChange); err != nil {
+				return err
+			}
+			if err = s.userRepo.SetPendingEmail(txCtx, user.ID, req.Email); err != nil {
+				return err
+			}
+			return s.verifyRepo.Create(txCtx, &repository.VerificationToken{UserID: user.ID, TokenHash: auth.HashToken(rawToken), Kind: repository.TokenKindEmailChange, ExpiresAt: time.Now().Add(time.Hour)})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("requesting email change: %w", err)
+		}
+		if err = s.mailer.SendEmailChangeEmail(ctx, req.Email, rawToken); err != nil {
+			return nil, fmt.Errorf("sending email change: %w", err)
+		}
+		user.PendingEmail = req.Email
 	}
 	return user, nil
 }
@@ -124,6 +162,47 @@ func (s *UserService) DeleteAccount(ctx context.Context, userID uuid.UUID) error
 		}
 		if err := s.tokenRepo.RevokeAllForUser(txCtx, userID); err != nil {
 			return fmt.Errorf("revoking tokens: %w", err)
+		}
+		return nil
+	})
+}
+
+// ConfirmEmailChange locks the account before consuming its purpose-specific token.
+// Installing the mailbox and invalidating credentials share the maintenance-locked transaction.
+func (s *UserService) ConfirmEmailChange(ctx context.Context, rawToken string) error {
+	hash := auth.HashToken(rawToken)
+	stored, err := s.verifyRepo.GetByHash(ctx, hash, repository.TokenKindEmailChange)
+	if err != nil {
+		return err
+	}
+	if stored == nil || !stored.ExpiresAt.After(time.Now()) {
+		return fmt.Errorf("invalid or expired email change token")
+	}
+	return s.tx.WithTransaction(ctx, func(txCtx context.Context) error {
+		user, err := s.userRepo.GetByIDForUpdate(txCtx, stored.UserID)
+		if err != nil {
+			return err
+		}
+		if user == nil || user.PendingEmail == "" {
+			return fmt.Errorf("invalid or expired email change token")
+		}
+		consumed, err := s.verifyRepo.ConsumeVerificationToken(txCtx, hash, repository.TokenKindEmailChange)
+		if err != nil {
+			return err
+		}
+		if consumed == nil {
+			return fmt.Errorf("invalid or expired email change token")
+		}
+		if err = s.userRepo.ConfirmPendingEmail(txCtx, user.ID, user.PendingEmail); err != nil {
+			return err
+		}
+		if err = s.tokenRepo.RevokeAllForUser(txCtx, user.ID); err != nil {
+			return err
+		}
+		for _, kind := range []string{repository.TokenKindEmailChange, repository.TokenKindEmailVerify, repository.TokenKindPasswordReset} {
+			if err = s.verifyRepo.RevokeAllForUser(txCtx, user.ID, kind); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

@@ -45,13 +45,13 @@ func (r *pgUserRepo) Create(ctx context.Context, user *model.User) error {
 
 func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version, verification_grandfathered, pending_email
 		FROM users WHERE id = $1 AND deleted_at IS NULL`
 
 	var user model.User
 	err := conn(ctx, r.pool).QueryRow(ctx, query, id).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion, &user.VerificationGrandfathered, &user.PendingEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -63,13 +63,13 @@ func (r *pgUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.User, er
 
 func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version, verification_grandfathered, pending_email
 		FROM users WHERE email = $1 AND deleted_at IS NULL`
 
 	var user model.User
 	err := conn(ctx, r.pool).QueryRow(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion, &user.VerificationGrandfathered, &user.PendingEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -81,13 +81,13 @@ func (r *pgUserRepo) GetByEmail(ctx context.Context, email string) (*model.User,
 
 func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version
+		SELECT id, email, password, verified, avatar, created_at, updated_at, deleted_at, session_version, verification_grandfathered, pending_email
 		FROM users WHERE email = $1 AND deleted_at IS NOT NULL`
 
 	var user model.User
 	err := conn(ctx, r.pool).QueryRow(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion, &user.VerificationGrandfathered, &user.PendingEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -102,11 +102,11 @@ func (r *pgUserRepo) GetDeletedByEmail(ctx context.Context, email string) (*mode
 func (r *pgUserRepo) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	var user model.User
 	const query = `SELECT id, email, password, verified, avatar, created_at,
-  updated_at, deleted_at, session_version
+  updated_at, deleted_at, session_version, verification_grandfathered, pending_email
   FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`
 	err := conn(ctx, r.pool).QueryRow(ctx, query, id).Scan(
 		&user.ID, &user.Email, &user.Password, &user.Verified, &user.Avatar,
-		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion)
+		&user.CreatedAt, &user.UpdatedAt, &user.DeletedAt, &user.SessionVersion, &user.VerificationGrandfathered, &user.PendingEmail)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -154,7 +154,13 @@ func (r *pgUserRepo) MarkVerified(ctx context.Context, id uuid.UUID, email strin
 	return r.updateFields(ctx, `UPDATE users SET verified=TRUE,updated_at=NOW() WHERE id=$1 AND email=$2 AND deleted_at IS NULL`, id, email)
 }
 func (r *pgUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, expectedPassword, password string) error {
-	return r.updateFields(ctx, `UPDATE users SET password=$3,session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND password=$2 AND deleted_at IS NULL`, id, expectedPassword, password)
+	return NewTransactor(r.pool).WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := r.updateFields(txCtx, `UPDATE users SET password=$3,pending_email='',session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND password=$2 AND deleted_at IS NULL`, id, expectedPassword, password); err != nil {
+			return err
+		}
+		_, err := conn(txCtx, r.pool).Exec(txCtx, `UPDATE verification_tokens SET used=TRUE WHERE user_id=$1 AND kind=$2 AND NOT used`, id, TokenKindEmailChange)
+		return err
+	})
 }
 func (r *pgUserRepo) RevokeSessions(ctx context.Context, id uuid.UUID) error {
 	return r.updateFields(ctx, `UPDATE users SET session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, id)
@@ -246,4 +252,11 @@ func (r *pgUserRepo) deleteUsers(ctx context.Context, selection string, arg any)
 		return nil, fmt.Errorf("committing purge: %w", err)
 	}
 	return deleted, nil
+}
+
+func (r *pgUserRepo) SetPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	return r.updateFields(ctx, `UPDATE users SET pending_email=$2,updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, id, email)
+}
+func (r *pgUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	return r.updateFields(ctx, `UPDATE users SET email=$2,pending_email='',verified=TRUE,session_version=session_version+1,updated_at=NOW() WHERE id=$1 AND pending_email=$2 AND pending_email<>'' AND deleted_at IS NULL`, id, email)
 }

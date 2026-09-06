@@ -262,3 +262,19 @@ func TestSendMultipleEmails(t *testing.T) {
 		t.Errorf("third email To = %q, want c@example.com", mailer.sentEmails[2].To)
 	}
 }
+
+func TestEmailChangeMailHasPurposeSpecificLink(t *testing.T) {
+	mailer := newTestMailer()
+	svc := NewMailService(mailer, "", "https://api.test.com")
+	sender := svc
+	if err := sender.SendEmailChangeEmail(context.Background(), "new@example.com", "change-token"); err != nil {
+		t.Fatal(err)
+	}
+	if len(mailer.sentEmails) != 1 {
+		t.Fatal("email was not delivered")
+	}
+	email := mailer.sentEmails[0]
+	if email.To != "new@example.com" || !strings.Contains(email.Body, "https://api.test.com/v1/auth/confirm-email-change?token=change-token") || strings.Contains(email.Body, "/verify-email") {
+		t.Fatalf("wrong purpose/recipient: %+v", email)
+	}
+}

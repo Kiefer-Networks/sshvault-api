@@ -76,8 +76,8 @@ func TestIntegrationAccessRevocation(t *testing.T) {
 			tx := repository.NewTransactor(pool)
 			jwt := newTestJWT(t)
 			svc := NewAuthService(users, tokens, verify, tx, jwt, nil, nil)
-			us := NewUserService(users, tokens, tx)
-			response, err := svc.Register(ctx, &RegisterRequest{Email: "user@example.com", Password: "old-password"})
+			us := NewUserService(users, tokens, tx, nil, nil)
+			response, err := registerVerified(t, svc, ctx, &RegisterRequest{Email: "user@example.com", Password: "old-password"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -132,7 +132,7 @@ func TestIntegrationRefreshRollback(t *testing.T) {
 	tx := repository.NewTransactor(pool)
 	jwt := newTestJWT(t)
 	svc := NewAuthService(users, tokens, verify, tx, jwt, nil, nil)
-	response, err := svc.Register(ctx, &RegisterRequest{Email: "refresh@example.com", Password: "password"})
+	response, err := registerVerified(t, svc, ctx, &RegisterRequest{Email: "refresh@example.com", Password: "password"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,8 +171,8 @@ func TestIntegrationProfilePreservesConcurrentPassword(t *testing.T) {
 			t.Fatal(err)
 		}
 	}}
-	svc := NewUserService(wrapped, repository.NewTokenRepository(pool), repository.NewTransactor(pool))
-	if _, err := svc.UpdateProfile(ctx, u.ID, &UpdateProfileRequest{Email: "new@example.com"}); err != nil {
+	svc := NewUserService(wrapped, repository.NewTokenRepository(pool), repository.NewTransactor(pool), nil, nil)
+	if _, err := svc.UpdateProfile(ctx, u.ID, &UpdateProfileRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := users.GetByID(ctx, u.ID)
@@ -266,7 +266,7 @@ func TestIntegrationPasswordlessAccountAndMissingDeletion(t *testing.T) {
 	if err := users.Create(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewUserService(users, tokens, tx)
+	svc := NewUserService(users, tokens, tx, nil, nil)
 	if err := svc.ChangePassword(ctx, u.ID, &ChangePasswordRequest{NewPassword: "new-password"}); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestIntegrationLoginCannotIssueFromRevokedSnapshot(t *testing.T) {
 	tx := repository.NewTransactor(pool)
 	jwt := newTestJWT(t)
 	svc := NewAuthService(users, tokens, repository.NewVerificationRepository(pool), tx, jwt, nil, nil)
-	response, err := svc.Register(ctx, &RegisterRequest{Email: "race@example.com", Password: "password"})
+	response, err := registerVerified(t, svc, ctx, &RegisterRequest{Email: "race@example.com", Password: "password"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestIntegrationRefreshWaitsForRevocation(t *testing.T) {
 	tx := repository.NewTransactor(pool)
 	jwt := newTestJWT(t)
 	svc := NewAuthService(users, tokens, repository.NewVerificationRepository(pool), tx, jwt, nil, nil)
-	response, err := svc.Register(ctx, &RegisterRequest{Email: "refresh-race@example.com", Password: "password"})
+	response, err := registerVerified(t, svc, ctx, &RegisterRequest{Email: "refresh-race@example.com", Password: "password"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,12 +570,12 @@ func TestIntegrationRegistrationCannotIssueForChangedEmail(t *testing.T) {
 		}
 	}}
 	svc := NewAuthService(wrapped, repository.NewTokenRepository(pool), verify, repository.NewTransactor(pool), newTestJWT(t), &mockMailer{}, nil)
-	response, err := svc.Register(ctx, &RegisterRequest{Email: "registration@example.com", Password: "password"})
+	_, err := svc.Register(ctx, &RegisterRequest{Email: "registration@example.com", Password: "password"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var active int
-	if err = pool.QueryRow(ctx, "SELECT count(*) FROM verification_tokens WHERE user_id=$1 AND NOT used", response.User.ID).Scan(&active); err != nil {
+	if err = pool.QueryRow(ctx, "SELECT count(*) FROM verification_tokens WHERE NOT used").Scan(&active); err != nil {
 		t.Fatal(err)
 	}
 	if active != 0 {

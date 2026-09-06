@@ -557,12 +557,13 @@ Base URL: `https://api.example.com`
 | `/health` | GET | No | Liveness check |
 | `/ready` | GET | No | Readiness check |
 | `/v1/auth/challenge` | GET | No | Get PoW challenge |
-| `/v1/auth/register` | POST | No | Register with email + password |
+| `/v1/auth/register` | POST | No | Opaque registration acceptance; mailbox verification required |
 | `/v1/auth/login` | POST | No | Login → access + refresh token |
 | `/v1/auth/refresh` | POST | No | Rotate tokens |
 | `/v1/auth/logout` | POST | No | Revoke refresh token |
 | `/v1/auth/logout-all` | POST | Yes | Revoke all sessions |
 | `/v1/auth/verify-email` | GET | No | Verify email via token |
+| `/v1/auth/confirm-email-change` | GET | No | Confirm pending email and revoke all sessions |
 | `/v1/auth/forgot-password` | POST | No | Send password reset link |
 | `/v1/auth/reset-password` | POST | No | Reset password via token |
 | `/v1/vault` | GET | Yes | Get encrypted vault blob |
@@ -578,6 +579,18 @@ Base URL: `https://api.example.com`
 | `/v1/audit` | GET | Yes | User activity log |
 | `/v1/attestation` | GET | No | Server attestation (Ed25519 signed) |
 | `/v1/attestation/pubkey` | GET | No | Attestation public key (for TOFU pinning) |
+
+Registration returns HTTP `202` with exactly:
+
+```json
+{"status":"If registration is available, check your email to verify your account."}
+```
+
+New, existing, and soft-deleted addresses receive the same response. Registration returns no account identifiers or access/refresh tokens. New accounts must follow the verification email before login. Correct credentials on a new unverified account, or a token presented to a protected route for that account, return HTTP `403` with `{"error":"verification_required"}`. Repeating registration resends verification for a new unverified account and preserves its original password. Verification links expire after 24 hours.
+
+Migration `023` explicitly marks pre-upgrade accounts as `verification_grandfathered`, including those whose `verified` value is false. Their existing sessions, login, and synchronization remain authorized. New accounts default to requiring verification; the migration does not rewrite actual mailbox verification status.
+
+To change email, send `PUT /v1/user` with `{"email":"new@example.com","current_password":"your-current-password"}`. A successful request returns HTTP `202` and `{"status":"pending_confirmation"}`. The old address remains active for login and password recovery, and keeps its verified state. The profile exposes `pending_email` until confirmation. The email sent to the pending address contains a single-use link to `GET /v1/auth/confirm-email-change?token=...`, valid for one hour. Confirmation installs and verifies the new address, clears the pending value, revokes every access/refresh session and obsolete email/reset token, and requires a fresh login. Replacing a pending request invalidates its previous confirmation link. Changing or resetting the password cancels pending email changes. Requests that keep the existing email, empty profile updates, and avatar updates retain their existing response shape.
 
 Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
 

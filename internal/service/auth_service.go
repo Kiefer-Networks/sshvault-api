@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/mail"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
@@ -56,6 +58,16 @@ func NewAuthService(
 	}
 }
 
+var ErrVerificationRequired = errors.New("verification_required")
+
+type RegistrationResponse struct {
+	Status string `json:"status"`
+}
+
+func registrationAccepted() *RegistrationResponse {
+	return &RegistrationResponse{Status: "If registration is available, check your email to verify your account."}
+}
+
 type RegisterRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -98,6 +110,9 @@ func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User, devi
 
 // issueTokenPairLocked requires the user's row lock for the current transaction.
 func (s *AuthService) issueTokenPairLocked(ctx context.Context, user *model.User, deviceName string) (*AuthResponse, error) {
+	if !user.Verified && !user.VerificationGrandfathered {
+		return nil, ErrVerificationRequired
+	}
 	tokenPair, refreshHash, err := s.jwt.GenerateTokenPair(user.ID, user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("generating tokens: %w", err)
@@ -148,7 +163,7 @@ func ValidateEmail(email string) error {
 	return nil
 }
 
-func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*RegistrationResponse, error) {
 	req.Email = NormalizeEmail(req.Email)
 
 	if err := ValidateEmail(req.Email); err != nil {
@@ -160,7 +175,10 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		return nil, fmt.Errorf("checking existing user: %w", err)
 	}
 	if existing != nil {
-		return nil, fmt.Errorf("email already registered")
+		if !existing.Verified && !existing.VerificationGrandfathered {
+			s.sendRegistrationVerification(ctx, existing, req.Email)
+		}
+		return registrationAccepted(), nil
 	}
 
 	// Also check for soft-deleted users occupying the email (unique constraint).
@@ -169,7 +187,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		return nil, fmt.Errorf("checking deleted user: %w", err)
 	}
 	if existingDeleted != nil {
-		return nil, fmt.Errorf("email already registered")
+		return registrationAccepted(), nil
 	}
 
 	hash, err := auth.HashPassword(req.Password)
@@ -184,11 +202,20 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return registrationAccepted(), nil
+		}
 		return nil, fmt.Errorf("creating user: %w", err)
 	}
 
 	log.Info().Str("email", maskEmail(req.Email)).Str("user_id", user.ID.String()).Msg("user registered")
 
+	s.sendRegistrationVerification(ctx, user, req.Email)
+	return registrationAccepted(), nil
+}
+
+func (s *AuthService) sendRegistrationVerification(ctx context.Context, user *model.User, email string) {
 	if s.mailer != nil {
 		rawToken := uuid.New().String()
 		hash := auth.HashToken(rawToken)
@@ -199,7 +226,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 			if err != nil {
 				return err
 			}
-			if current == nil || current.Email != req.Email {
+			if current == nil || current.Email != email || current.Verified || current.VerificationGrandfathered {
 				return nil
 			}
 			token := &repository.VerificationToken{
@@ -215,16 +242,15 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 			return nil
 		})
 		if err != nil {
-			log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to store verification token")
+			log.Warn().Err(err).Str("email", maskEmail(email)).Msg("failed to store verification token")
 		} else if issued {
-			if err := s.mailer.SendVerificationEmail(ctx, req.Email, rawToken); err != nil {
-				log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to send verification email")
+			if err := s.mailer.SendVerificationEmail(ctx, email, rawToken); err != nil {
+				log.Warn().Err(err).Str("email", maskEmail(email)).Msg("failed to send verification email")
 			}
 		}
 
 	}
 
-	return s.issueTokenPair(ctx, user, "")
 }
 
 func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -52,9 +53,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			Send()
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "already registered"):
-			// Return a generic success to prevent email enumeration
-			respondJSON(w, http.StatusCreated, map[string]string{"status": "registration successful"})
 		case strings.Contains(msg, "invalid email"):
 			respondError(w, http.StatusBadRequest, msg)
 		default:
@@ -65,10 +63,9 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogFromRequest(r, audit.CatAuth, audit.ActRegister).
-		Actor(resp.User.ID, req.Email).
-		Resource("user", resp.User.ID.String()).
+		Detail("email", "[redacted]").
 		Send()
-	respondJSON(w, http.StatusCreated, resp)
+	respondJSON(w, http.StatusAccepted, resp)
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +88,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			Level(audit.LevelWarn).
 			Detail("email", "[redacted]").
 			Send()
+		if errors.Is(err, service.ErrVerificationRequired) {
+			respondError(w, http.StatusForbidden, "verification_required")
+			return
+		}
 		respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}

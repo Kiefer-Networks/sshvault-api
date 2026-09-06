@@ -231,7 +231,7 @@ func main() {
 	// Services
 	authService := service.NewAuthService(userRepo, tokenRepo, verifyRepo, transactor, jwtManager, mailService, bruteForceGuard)
 	vaultService := service.NewVaultService(vaultRepo, transactor, cfg.Vault.MaxSizeMB, cfg.Vault.HistoryLimit)
-	userService := service.NewUserService(userRepo, tokenRepo, transactor)
+	userService := service.NewUserService(userRepo, tokenRepo, transactor, verifyRepo, mailService)
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler(pool)
@@ -332,6 +332,7 @@ func main() {
 			r.Post("/refresh", authHandler.Refresh)
 			r.Post("/logout", authHandler.Logout)
 			r.Get("/verify-email", authHandler.VerifyEmail)
+			r.Get("/confirm-email-change", userHandler.ConfirmEmailChange)
 			r.Post("/forgot-password", authHandler.ForgotPassword)
 			r.Post("/reset-password", authHandler.ResetPassword)
 		})

@@ -14,6 +14,8 @@ type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
 	GetDeletedByEmail(ctx context.Context, email string) (*model.User, error)
 	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.User, error)
+	SetPendingEmail(ctx context.Context, id uuid.UUID, email string) error
+	ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error
 	UpdateEmail(ctx context.Context, id uuid.UUID, email string) error
 	UpdateAvatar(ctx context.Context, id uuid.UUID, avatar string) error
 	MarkVerified(ctx context.Context, id uuid.UUID, email string) error

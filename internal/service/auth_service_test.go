@@ -218,87 +218,46 @@ func newTestAuthService(t *testing.T) (*AuthService, *mockUserRepo, *mockTokenRe
 // --- Register Tests ---
 
 func TestRegisterSuccess(t *testing.T) {
-	svc, userRepo, _, _, mailer := newTestAuthService(t)
-
-	resp, err := svc.Register(context.Background(), &RegisterRequest{
-		Email:    "test@example.com",
-		Password: "strongpassword123",
-	})
+	svc, users, tokens, _, mailer := newTestAuthService(t)
+	res, err := svc.Register(context.Background(), &RegisterRequest{Email: "  TEST@EXAMPLE.COM  ", Password: "password123"})
 	if err != nil {
-		t.Fatalf("Register: %v", err)
+		t.Fatal(err)
 	}
-	if resp.User == nil {
-		t.Fatal("expected user in response")
-	}
-	if resp.User.Email != "test@example.com" {
-		t.Errorf("email = %q, want %q", resp.User.Email, "test@example.com")
-	}
-	if resp.AccessToken == "" {
-		t.Error("expected access token")
-	}
-	if resp.RefreshToken == "" {
-		t.Error("expected refresh token")
-	}
-	if len(userRepo.users) != 1 {
-		t.Errorf("users count = %d, want 1", len(userRepo.users))
-	}
-	if mailer.sentVerification != 1 {
-		t.Errorf("verification emails = %d, want 1", mailer.sentVerification)
+	if res.Status == "" || users.emailIndex["test@example.com"] == nil || len(tokens.tokens) != 0 || mailer.sentVerification != 1 {
+		t.Fatal("registration must normalize email, send verification and issue no sessions")
 	}
 }
-
 func TestRegisterDuplicateEmail(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
-	ctx := context.Background()
-
-	_, err := svc.Register(ctx, &RegisterRequest{
-		Email:    "dup@example.com",
-		Password: "strongpassword123",
-	})
+	a, err := svc.Register(context.Background(), &RegisterRequest{Email: "test@example.com", Password: "password123"})
 	if err != nil {
-		t.Fatalf("first Register: %v", err)
+		t.Fatal(err)
 	}
-
-	_, err = svc.Register(ctx, &RegisterRequest{
-		Email:    "dup@example.com",
-		Password: "anotherpassword123",
-	})
-	if err == nil {
-		t.Fatal("expected error for duplicate email")
-	}
-	if !strings.Contains(err.Error(), "already registered") {
-		t.Errorf("error = %q, want 'already registered'", err.Error())
+	b, err := svc.Register(context.Background(), &RegisterRequest{Email: "test@example.com", Password: "password123"})
+	if err != nil || *a != *b {
+		t.Fatal("registration must be indistinguishable")
 	}
 }
-
 func TestRegisterInvalidEmail(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
-
-	_, err := svc.Register(context.Background(), &RegisterRequest{
-		Email:    "not-an-email",
-		Password: "strongpassword123",
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid email")
-	}
-	if !strings.Contains(err.Error(), "invalid email") {
-		t.Errorf("error = %q, want 'invalid email'", err.Error())
+	if _, err := svc.Register(context.Background(), &RegisterRequest{Email: "invalid", Password: "password123"}); err == nil {
+		t.Fatal("invalid email accepted")
 	}
 }
 
-func TestRegisterNormalizesEmail(t *testing.T) {
-	svc, _, _, _, _ := newTestAuthService(t)
-
-	resp, err := svc.Register(context.Background(), &RegisterRequest{
-		Email:    "  TEST@EXAMPLE.COM  ",
-		Password: "strongpassword123",
-	})
+func registerVerified(t *testing.T, svc *AuthService, ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+	t.Helper()
+	if _, err := svc.Register(ctx, req); err != nil {
+		return nil, err
+	}
+	u, err := svc.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
-		t.Fatalf("Register: %v", err)
+		return nil, err
 	}
-	if resp.User.Email != "test@example.com" {
-		t.Errorf("email = %q, want %q", resp.User.Email, "test@example.com")
+	if err = svc.userRepo.MarkVerified(ctx, u.ID, u.Email); err != nil {
+		return nil, err
 	}
+	return svc.Login(ctx, &LoginRequest{Email: req.Email, Password: req.Password})
 }
 
 // --- Login Tests ---
@@ -307,7 +266,7 @@ func TestLoginSuccess(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
 	ctx := context.Background()
 
-	_, err := svc.Register(ctx, &RegisterRequest{
+	_, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "login@example.com",
 		Password: "mypassword123",
 	})
@@ -331,7 +290,7 @@ func TestLoginWrongPassword(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
 	ctx := context.Background()
 
-	_, err := svc.Register(ctx, &RegisterRequest{
+	_, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "wrong@example.com",
 		Password: "correctpassword",
 	})
@@ -372,7 +331,7 @@ func TestRefreshSuccess(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
 	ctx := context.Background()
 
-	regResp, err := svc.Register(ctx, &RegisterRequest{
+	regResp, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "refresh@example.com",
 		Password: "mypassword123",
 	})
@@ -398,7 +357,7 @@ func TestRefreshRevokedToken(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
 	ctx := context.Background()
 
-	regResp, err := svc.Register(ctx, &RegisterRequest{
+	regResp, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "revoke@example.com",
 		Password: "mypassword123",
 	})
@@ -436,7 +395,7 @@ func TestLogoutSuccess(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
 	ctx := context.Background()
 
-	regResp, err := svc.Register(ctx, &RegisterRequest{
+	regResp, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "logout@example.com",
 		Password: "mypassword123",
 	})
@@ -466,45 +425,22 @@ func TestLogoutNonExistentToken(t *testing.T) {
 // --- VerifyEmail Tests ---
 
 func TestVerifyEmailSuccess(t *testing.T) {
-	svc, userRepo, _, verifyRepo, _ := newTestAuthService(t)
+	svc, users, _, _, _ := newTestAuthService(t)
+	mail := &lifecycleMailbox{}
+	svc.mailer = mail
 	ctx := context.Background()
-
-	// Register creates a verification token
-	regResp, err := svc.Register(ctx, &RegisterRequest{
-		Email:    "verify@example.com",
-		Password: "mypassword123",
-	})
-	if err != nil {
-		t.Fatalf("Register: %v", err)
+	if _, err := svc.Register(ctx, &RegisterRequest{Email: "verify@example.com", Password: "password123"}); err != nil {
+		t.Fatal(err)
 	}
-
-	if regResp.User.Verified {
-		t.Fatal("user should not be verified initially")
+	user := users.emailIndex["verify@example.com"]
+	if user.Verified {
+		t.Fatal("new account already verified")
 	}
-
-	// Find the token that was created
-	var rawToken string
-	for _, vt := range verifyRepo.tokens {
-		if vt.UserID == regResp.User.ID && vt.Kind == repository.TokenKindEmailVerify {
-			// We can't recover the raw token from the hash, so we test the flow differently:
-			// Store a known token and verify it
-			rawToken = uuid.New().String()
-			vt.TokenHash = auth.HashToken(rawToken)
-			break
-		}
+	if err := svc.VerifyEmail(ctx, mail.verification); err != nil {
+		t.Fatal(err)
 	}
-
-	if rawToken == "" {
-		t.Fatal("no verification token found")
-	}
-
-	if err := svc.VerifyEmail(ctx, rawToken); err != nil {
-		t.Fatalf("VerifyEmail: %v", err)
-	}
-
-	user := userRepo.users[regResp.User.ID]
 	if !user.Verified {
-		t.Error("user should be verified after VerifyEmail")
+		t.Fatal("verification did not authorize account")
 	}
 }
 
@@ -523,7 +459,7 @@ func TestForgotPasswordExistingUser(t *testing.T) {
 	svc, _, _, _, mailer := newTestAuthService(t)
 	ctx := context.Background()
 
-	_, err := svc.Register(ctx, &RegisterRequest{
+	_, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "forgot@example.com",
 		Password: "mypassword123",
 	})
@@ -558,7 +494,7 @@ func TestLogoutAllRevokesAllTokens(t *testing.T) {
 	svc, _, tokenRepo, _, _ := newTestAuthService(t)
 	ctx := context.Background()
 
-	regResp, err := svc.Register(ctx, &RegisterRequest{
+	regResp, err := registerVerified(t, svc, ctx, &RegisterRequest{
 		Email:    "logoutall@example.com",
 		Password: "mypassword123",
 	})
@@ -638,3 +574,25 @@ type testTransactionRunner struct{}
 func (testTransactionRunner) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
 }
+
+func (m *mockUserRepo) SetPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.PendingEmail = email
+	return nil
+}
+func (m *mockUserRepo) ConfirmPendingEmail(ctx context.Context, id uuid.UUID, email string) error {
+	u, err := m.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	u.Email = email
+	u.PendingEmail = ""
+	u.Verified = true
+	u.SessionVersion++
+	return nil
+}
+
+func (m *mockMailer) SendEmailChangeEmail(context.Context, string, string) error { return nil }

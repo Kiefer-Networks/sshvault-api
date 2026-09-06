@@ -60,6 +60,10 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogFromRequest(r, audit.CatUser, audit.ActProfileUpdate).Send()
+	if req.Email != "" && service.NormalizeEmail(req.Email) != user.Email {
+		respondJSON(w, http.StatusAccepted, map[string]string{"status": "pending_confirmation"})
+		return
+	}
 	respondJSON(w, http.StatusOK, user)
 }
 
@@ -194,4 +198,18 @@ func (h *UserHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
 
 	h.audit.LogFromRequest(r, audit.CatUser, audit.ActProfileUpdate).Send()
 	respondJSON(w, http.StatusOK, map[string]string{"status": "avatar deleted"})
+}
+
+func (h *UserHandler) ConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		respondError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+	if err := h.userService.ConfirmEmailChange(r.Context(), token); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid or expired email change token")
+		return
+	}
+	h.audit.LogFromRequest(r, audit.CatUser, audit.ActProfileUpdate).Send()
+	respondJSON(w, http.StatusOK, map[string]string{"status": "email changed; sign in again"})
 }

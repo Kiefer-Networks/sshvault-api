@@ -1,7 +1,7 @@
 openapi: "3.1.0"
 info:
   title: SSHVault API
-  description: Zero-Knowledge encrypted sync server for the SSHVault SSH client app.
+  description: Zero-Knowledge encrypted sync server for the SSHVault SSH client app. Protected routes return 403 verification_required for new unverified accounts. Accounts grandfathered by migration 023 retain login and sync access without changing their verified value.
   version: "1.0.0"
   contact:
     name: Kiefer Networks
@@ -101,7 +101,7 @@ paths:
     post:
       tags: [Auth]
       summary: Register new account
-      description: Requires a solved PoW challenge. Get one from `GET /v1/auth/challenge` first.
+      description: Requires a solved PoW challenge. Always returns the same opaque acceptance for new, existing, and deleted addresses. New accounts must verify before login. Repeating registration resends verification for a new unverified account without changing its password.
       operationId: register
       parameters:
         - $ref: "#/components/parameters/PowChallenge"
@@ -122,12 +122,12 @@ paths:
                   type: string
                   minLength: 8
       responses:
-        "201":
-          description: Account created
+        "202":
+          description: Registration accepted without account identifiers or credentials
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/RegistrationResponse"
         "428":
           description: Proof of work required (missing X-PoW headers)
           content:
@@ -186,7 +186,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Invalid or expired proof of work
+          description: Invalid or expired proof of work, or verification_required for correct credentials on a new unverified account
           content:
             application/json:
               schema:
@@ -267,6 +267,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/auth/confirm-email-change:
+    get:
+      tags: [Auth]
+      summary: Confirm a pending email change
+      description: Consumes a purpose-specific one-hour token once. Atomically installs and verifies the pending address, clears pending_email, revokes all sessions and obsolete email/reset tokens. Sign in again afterward. Password changes and resets cancel pending changes.
+      operationId: confirmEmailChange
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Email changed; sign in again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: email changed; sign in again
+        "400":
+          description: Missing, expired, used, superseded, or conflicting email change token
 
   /v1/auth/forgot-password:
     post:
@@ -428,7 +454,8 @@ paths:
                 $ref: "#/components/schemas/User"
     put:
       tags: [User]
-      summary: Update user profile
+      summary: Update profile or request a password-authenticated email change
+      description: Email changes require current_password. The active recovery email and verification state remain unchanged until confirmation; other profile requests retain their shape.
       operationId: updateUser
       security:
         - bearerAuth: []
@@ -442,7 +469,23 @@ paths:
                 email:
                   type: string
                   format: email
+                current_password:
+                  type: string
+                  description: Required when changing email.
       responses:
+        "202":
+          description: Confirmation sent to the pending address; active email remains unchanged
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: pending_confirmation
+        "400":
+          description: Invalid email, current password, or unavailable email change
         "200":
           content:
             application/json:
@@ -793,6 +836,15 @@ components:
           description: Unix timestamp when this challenge expires (2 min TTL)
           example: 1741170120
 
+    RegistrationResponse:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          const: If registration is available, check your email to verify your account.
+
     AuthResponse:
       type: object
       properties:
@@ -815,8 +867,13 @@ components:
         email:
           type: string
           format: email
+        pending_email:
+          type: string
+          format: email
+          description: Present only while an email change awaits confirmation.
         verified:
           type: boolean
+          description: Actual mailbox verification state. Pre-upgrade accounts remain authorized even when false.
         avatar:
           type: string
           description: Base64-encoded avatar image (max 512 KB)
