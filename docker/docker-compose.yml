@@ -19,6 +19,8 @@ services:
       - keys:/app/keys
       - logs:/app/logs
     stop_grace_period: 35s
+    cap_drop:
+      - ALL
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -34,6 +36,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     entrypoint: ["./sshvault-cli", "backup", "auto"]
+    cap_drop:
+      - ALL
     env_file:
       - ../.env
     environment:

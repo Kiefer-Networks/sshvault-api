@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -280,6 +281,40 @@ func registerVerified(t *testing.T, svc *AuthService, ctx context.Context, req *
 }
 
 // --- Login Tests ---
+
+type forbiddenLoginLookup struct {
+	repository.UserRepository
+	t *testing.T
+}
+
+func (r forbiddenLoginLookup) GetByEmail(context.Context, string) (*model.User, error) {
+	r.t.Fatal("oversized password reached user lookup and password verification")
+	return nil, nil
+}
+
+func TestLoginRejectsOversizedPasswordBeforeLookup(t *testing.T) {
+	for _, password := range []string{strings.Repeat("a", 257), strings.Repeat("\u00e4", 129)} {
+		t.Run(fmt.Sprintf("%d bytes", len(password)), func(t *testing.T) {
+			svc := &AuthService{userRepo: forbiddenLoginLookup{t: t}}
+			resp, err := svc.Login(context.Background(), &LoginRequest{Email: "login@example.com", Password: password})
+			if resp != nil || err == nil || err.Error() != "invalid credentials" {
+				t.Fatalf("Login = %v, %v; want invalid credentials", resp, err)
+			}
+		})
+	}
+}
+
+func TestLoginAcceptsPasswordAtByteLimit(t *testing.T) {
+	for _, password := range []string{strings.Repeat("a", 256), strings.Repeat("\u00e4", 128)} {
+		t.Run(fmt.Sprintf("%d runes", len([]rune(password))), func(t *testing.T) {
+			svc, _, _, _, _ := newTestAuthService(t)
+			resp, err := registerVerified(t, svc, context.Background(), &RegisterRequest{Email: "login@example.com", Password: password})
+			if err != nil || resp == nil || resp.AccessToken == "" {
+				t.Fatalf("password at byte limit failed to log in: %v", err)
+			}
+		})
+	}
+}
 
 func TestLoginSuccess(t *testing.T) {
 	svc, _, _, _, _ := newTestAuthService(t)
