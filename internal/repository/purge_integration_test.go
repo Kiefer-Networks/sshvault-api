@@ -363,3 +363,34 @@ func TestForwardMigrationRemovesLegacyFailedAuthDetails(t *testing.T) {
 		t.Fatal("forward migration left trigger disabled")
 	}
 }
+
+func TestMigration026RedactsUppercaseAuthDetails(t *testing.T) {
+	p := testutil.Database(t, 25)
+	testutil.Exec(t, p, `INSERT INTO audit_logs(category,action,details) VALUES
+		('AUTH','LOGIN_FAILED','{"email":"legacy@example.com","error":"duplicate legacy@example.com","attempt":2}'),
+		('AUTH','LOGIN_FAILED','{"error":"unknown legacy@example.com","attempt":3}')`)
+	sql, err := os.ReadFile(filepath.Join(testutil.MigrationDir(), "026_redact_auth_audit_details.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Exec(t, p, string(sql))
+
+	rows, err := p.Query(context.Background(), `SELECT details::text FROM audit_logs ORDER BY details->>'attempt'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := []string{`{"email": "[redacted]", "attempt": 2}`, `{"attempt": 3}`}
+	for i := 0; rows.Next(); i++ {
+		var details string
+		if err := rows.Scan(&details); err != nil {
+			t.Fatal(err)
+		}
+		if i >= len(want) || details != want[i] {
+			t.Fatalf("row %d retained legacy PII: %s", i, details)
+		}
+	}
+	if _, err := p.Exec(context.Background(), `UPDATE audit_logs SET action='tampered'`); err == nil {
+		t.Fatal("migration left immutability trigger disabled")
+	}
+}
