@@ -72,8 +72,9 @@ make run
 ```bash
 cp .env.example .env
 # Edit .env — set POSTGRES_PASSWORD, TRUSTED_PROXIES, etc.
-# IMPORTANT: Set SERVER_ADDR=0.0.0.0:8080 for Docker (binds inside container)
 ```
+
+Compose supplies the server and backup containers with the internal database host `postgres` and safely URL-encodes `POSTGRES_PASSWORD`. `DATABASE_URL` remains the native-host connection string used by `make migrate`, `make run`, and direct CLI commands.
 
 #### Build
 
@@ -113,7 +114,7 @@ docker compose --env-file .env -f docker/docker-compose.yml build
 docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate
 ```
 
-> **Note:** `SERVER_ADDR` must be set to `0.0.0.0:8080` inside Docker containers. The port mapping in `docker-compose.yml` (`127.0.0.1:8080:8080`) ensures the server is only reachable via localhost on the host. A reverse proxy is **required** for TLS termination — see [Reverse Proxy Setup](#reverse-proxy-setup) below.
+> **Note:** Compose sets `SERVER_ADDR=0.0.0.0:8080` inside the server container. The port mapping in `docker-compose.yml` (`127.0.0.1:8080:8080`) ensures the server is only reachable via localhost on the host. A reverse proxy is **required** for TLS termination — see [Reverse Proxy Setup](#reverse-proxy-setup) below.
 
 ## CLI Tool
 

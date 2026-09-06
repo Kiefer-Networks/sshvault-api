@@ -1,8 +1,26 @@
 package config
 
 import (
+	"net/url"
 	"testing"
 )
+
+func TestLoadAppliesDatabasePasswordWithoutStringInterpolation(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://sshvault@postgres:5432/sshvault?sslmode=disable")
+	t.Setenv("DATABASE_PASSWORD", "p@ss:word/%")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(cfg.Database.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, ok := parsed.User.Password()
+	if !ok || password != "p@ss:word/%" {
+		t.Fatalf("database password = %q, %v", password, ok)
+	}
+}
 
 func TestLoadRejectsInvalidRuntimeConfiguration(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://test:test@localhost/test?sslmode=disable")

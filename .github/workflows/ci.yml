@@ -140,6 +140,20 @@ jobs:
           cp .env.example .env
           POSTGRES_PASSWORD=ci-only-password docker compose -f docker/docker-compose.yml config --quiet
           grep -Eq 'image: postgres:16-alpine@sha256:[a-f0-9]{64}$' docker/docker-compose.yml
+      - name: Smoke test Compose database connectivity
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        run: |
+          trap 'docker compose -f docker/docker-compose.yml down --volumes' EXIT
+          docker compose -f docker/docker-compose.yml up --detach --build postgres server
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8080/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose -f docker/docker-compose.yml logs server postgres
+          exit 1
       - name: Check runtime permissions and backup tools
         run: |
           docker run --rm --entrypoint sh sshvault-server:ci -ec '

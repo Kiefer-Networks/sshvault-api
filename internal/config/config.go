@@ -42,7 +42,8 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	URL string `envconfig:"DATABASE_URL" required:"true"`
+	URL      string `envconfig:"DATABASE_URL" required:"true"`
+	Password string `envconfig:"DATABASE_PASSWORD"`
 }
 
 type JWTConfig struct {
@@ -104,10 +105,27 @@ func Load() (*Config, error) {
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
+	if err := cfg.applyDatabasePassword(); err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	return &cfg, nil
+}
+
+func (c *Config) applyDatabasePassword() error {
+	if c.Database.Password == "" {
+		return nil
+	}
+	connection, err := url.Parse(c.Database.URL)
+	if err != nil || (connection.Scheme != "postgres" && connection.Scheme != "postgresql") || connection.User == nil || connection.User.Username() == "" {
+		return fmt.Errorf("DATABASE_PASSWORD requires a PostgreSQL URL with a username")
+	}
+	connection.User = url.UserPassword(connection.User.Username(), c.Database.Password)
+	c.Database.URL = connection.String()
+	c.Database.Password = ""
+	return nil
 }
 
 // Validate runs before constructing pools, listeners, tickers, or buffered workers.
