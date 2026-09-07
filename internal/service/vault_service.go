@@ -180,7 +180,7 @@ func (s *VaultService) GetHistory(ctx context.Context, userID uuid.UUID) ([]Vaul
 		return nil, fmt.Errorf("getting vault: %w", err)
 	}
 	if vault == nil {
-		return nil, nil
+		return []VaultHistoryEntry{}, nil
 	}
 
 	entries, err := s.vaultRepo.GetHistory(ctx, vault.ID, userID, s.historyLimit)

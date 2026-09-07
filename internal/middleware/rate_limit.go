@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"golang.org/x/time/rate"
 )
 
@@ -37,7 +38,14 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 	}
-	go rl.cleanup()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).Msg("recovered from panic in rate limiter cleanup")
+			}
+		}()
+		rl.cleanup()
+	}()
 	return rl
 }
 

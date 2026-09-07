@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
+
 	"github.com/kiefernetworks/shellvault-server/internal/auth"
 	"github.com/kiefernetworks/shellvault-server/internal/model"
 	"github.com/kiefernetworks/shellvault-server/internal/repository"
@@ -78,6 +80,11 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 		if err := ValidateEmail(req.Email); err != nil {
 			return nil, fmt.Errorf("invalid email format")
 		}
+		// Match the byte limit enforced when passwords are set. Reject before
+		// any Argon2 work on an oversized, attacker-controlled input.
+		if len(req.CurrentPassword) > 256 {
+			return nil, fmt.Errorf("invalid current password")
+		}
 		valid, err := auth.VerifyPasswordContext(ctx, req.CurrentPassword, user.Password)
 		if err != nil || !valid {
 			return nil, fmt.Errorf("invalid current password")
@@ -119,8 +126,10 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, req *
 		if err != nil {
 			return nil, fmt.Errorf("requesting email change: %w", err)
 		}
-		if err = s.mailer.SendEmailChangeEmail(ctx, req.Email, rawToken); err != nil {
-			return nil, fmt.Errorf("sending email change: %w", err)
+		// pending_email and the verification token are already committed; a mail
+		// delivery failure here must not be reported as a failed profile update.
+		if err := s.mailer.SendEmailChangeEmail(ctx, req.Email, rawToken); err != nil {
+			log.Warn().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to send email change notification")
 		}
 		user.PendingEmail = req.Email
 	}
@@ -134,6 +143,12 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 	}
 	if user == nil {
 		return fmt.Errorf("user not found")
+	}
+
+	// Match the byte limit enforced when passwords are set. Reject before any
+	// Argon2 work on an oversized, attacker-controlled input.
+	if len(req.CurrentPassword) > 256 {
+		return fmt.Errorf("invalid current password")
 	}
 
 	if user.Password != "" {

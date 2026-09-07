@@ -6,6 +6,8 @@ info:
     Protected routes return 403 `verification_required` for new unverified accounts. Accounts grandfathered by migration 023 retain login and sync access without changing their verified value.
 
     Unless an operation describes a more specific error, JSON endpoints use `ErrorResponse`. Request processing can return 400 for malformed input, 413 for an oversized body, 415 for an unsupported media type, 429 when rate limited, and 500 for an internal failure. Bearer-protected operations can additionally return 401 for an invalid, expired, or revoked access token, 403 `verification_required`, and 503 when authentication state cannot be checked.
+
+    Every response carries `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers (per client IP, global limiter); a 429 additionally sets `Retry-After: 60`.
   version: "1.0.0"
   contact:
     name: Kiefer Networks
@@ -498,6 +500,8 @@ paths:
       operationId: getVault
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIDHeader"
       responses:
         "200":
           description: Current vault
@@ -515,6 +519,8 @@ paths:
       operationId: putVault
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIDHeader"
       requestBody:
         description: New encrypted vault version, Base64 blob, and the client's SHA-256 checksum.
         required: true
@@ -920,6 +926,30 @@ paths:
           in: query
           schema:
             type: string
+            enum:
+              [
+                REGISTER,
+                LOGIN,
+                LOGIN_FAILED,
+                REFRESH_TOKEN,
+                LOGOUT,
+                LOGOUT_ALL,
+                VERIFY_EMAIL,
+                FORGOT_PASSWORD,
+                RESET_PASSWORD,
+                SYNC_PULL,
+                SYNC_PUSH,
+                HISTORY_VIEW,
+                PROFILE_VIEW,
+                PROFILE_UPDATE,
+                PASSWORD_CHANGE,
+                ACCOUNT_DELETE,
+                DEVICE_REGISTER,
+                DEVICE_LIST,
+                DEVICE_DELETE,
+                STARTUP,
+                SHUTDOWN,
+              ]
           description: Filter by specific action
         - name: from
           in: query
@@ -1032,10 +1062,37 @@ components:
   responses:
     DefaultError:
       description: Error response not listed separately by the operation.
+      headers:
+        RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+
+  headers:
+    RateLimitLimit:
+      description: Requests allowed per window for this client IP.
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Requests remaining in the current window for this client IP.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Seconds until a new request token becomes available.
+      schema:
+        type: integer
+    RetryAfter:
+      description: Seconds to wait before retrying. Present only on 429 responses.
+      schema:
+        type: integer
 
   securitySchemes:
     bearerAuth:
@@ -1061,6 +1118,14 @@ components:
       schema:
         type: string
         example: "48291"
+    DeviceIDHeader:
+      name: X-Device-ID
+      in: header
+      required: false
+      description: Registered device ID (from `POST /v1/devices`). Updates that device's last-sync timestamp; silently ignored if absent, malformed, or unregistered.
+      schema:
+        type: string
+        format: uuid
 
   schemas:
     VerifyEmailRequest:

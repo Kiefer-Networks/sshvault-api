@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -64,7 +65,15 @@ func runCleanup(ctx context.Context, operations ...func(context.Context) error) 
 	var wg sync.WaitGroup
 	for _, operation := range operations {
 		wg.Add(1)
-		go func() { defer wg.Done(); results <- operation(ctx) }()
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					results <- fmt.Errorf("recovered from panic in cleanup operation: %v", r)
+				}
+			}()
+			results <- operation(ctx)
+		}()
 	}
 	go func() { wg.Wait(); close(results) }()
 	var errs []error

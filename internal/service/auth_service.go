@@ -332,10 +332,12 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		return nil, err
 	}
 	if s.bruteForce != nil {
-		if err = s.bruteForce.CompleteAttempt(ctx, req.Email, attemptID, true); err != nil {
-			return nil, err
-		}
+		// The token pair is already committed; a bookkeeping failure here must not
+		// turn an issued session into a reported login failure.
 		completed = true
+		if err := s.bruteForce.CompleteAttempt(ctx, req.Email, attemptID, true); err != nil {
+			log.Error().Err(err).Str("email", maskEmail(req.Email)).Msg("failed to record successful login attempt")
+		}
 	}
 	log.Info().Str("email", maskEmail(req.Email)).Msg("login successful")
 	return response, nil

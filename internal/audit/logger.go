@@ -46,8 +46,22 @@ func NewLogger(repo EntryWriter, bufferSize int) *Logger {
 		ch:   make(chan *Entry, bufferSize),
 		done: make(chan struct{}),
 	}
-	go l.run()
-	go l.reportDropped()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).Msg("recovered from panic in audit logger run loop")
+			}
+		}()
+		l.run()
+	}()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).Msg("recovered from panic in audit logger drop reporter")
+			}
+		}()
+		l.reportDropped()
+	}()
 	return l
 }
 

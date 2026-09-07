@@ -235,8 +235,13 @@ func TestGetHistoryEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHistory: %v", err)
 	}
-	if entries != nil {
-		t.Errorf("expected nil entries for non-existent vault, got %d", len(entries))
+	// Must be a non-nil empty slice, not nil: the handler serializes this
+	// directly to JSON, and nil would encode as "history": null instead of [].
+	if entries == nil {
+		t.Error("expected non-nil empty slice for non-existent vault, got nil")
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for non-existent vault, got %d", len(entries))
 	}
 }
 
